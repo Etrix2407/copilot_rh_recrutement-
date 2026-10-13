@@ -5,8 +5,9 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from app.api.dependencies import CandidateStoreDep, LLMClientDep
 from app.llm.base import LLMError
 from app.models.candidate import Candidate
-from app.services.cv_parser import CVParsingError, analyze_candidate
+from app.services.cv_parser import analyze_candidate
 from app.services.cv_reader import CVReadError, read_cv_file
+from app.services.structured_output import InvalidLLMOutputError
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
@@ -34,5 +35,5 @@ async def parse_candidate(
 
     try:
         return await analyze_candidate(cv_text, llm=llm, store=store)
-    except (LLMError, CVParsingError) as exc:
+    except (LLMError, InvalidLLMOutputError) as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
