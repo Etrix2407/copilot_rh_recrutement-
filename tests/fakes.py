@@ -1,10 +1,49 @@
-"""Doublures de test partagées : faux client LLM et générateur de PDF."""
+"""Doublures de test partagées : faux client LLM, faux embedding et générateur de PDF."""
 
+import re
+import zlib
 from collections.abc import Sequence
+from typing import Any
 
+import numpy as np
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from pydantic import BaseModel
 
 from app.llm.base import LLMError, Message
+
+
+class FakeEmbeddingFunction(EmbeddingFunction[Documents]):
+    """Embedding déterministe, sans modèle à télécharger : chaque mot incrémente une case du vecteur.
+
+    Deux textes qui partagent des mots sont donc proches, ce qui suffit pour tester la recherche.
+    """
+
+    DIMENSIONS = 64
+
+    def __init__(self) -> None:
+        pass
+
+    def __call__(self, input: Documents) -> Embeddings:
+        vectors = []
+        for text in input:
+            vector = np.zeros(self.DIMENSIONS, dtype=np.float32)
+            for word in re.findall(r"\w+", text.lower()):
+                vector[zlib.crc32(word.encode()) % self.DIMENSIONS] += 1.0
+            # Vecteur unitaire : la distance dépend des mots communs, pas de la longueur du texte
+            norm = np.linalg.norm(vector)
+            vectors.append(vector / norm if norm else vector)
+        return vectors
+
+    @staticmethod
+    def name() -> str:
+        return "fake-bag-of-words"
+
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "FakeEmbeddingFunction":
+        return FakeEmbeddingFunction()
 
 
 class FakeLLMClient:
@@ -35,6 +74,9 @@ class FakeLLMClient:
         if isinstance(answer, LLMError):
             raise answer
         return answer
+
+    async def aclose(self) -> None:
+        pass
 
 
 def build_pdf(text: str) -> bytes:

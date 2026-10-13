@@ -7,7 +7,8 @@ from app.llm.base import Role
 from app.models.candidate import CandidateStatus
 from app.models.cv_analysis import CVAnalysis
 from app.services.candidate_store import CandidateStore
-from app.services.cv_parser import UNNAMED_CANDIDATE, CVParsingError, analyze_candidate, parse_cv
+from app.services.cv_parser import UNNAMED_CANDIDATE, analyze_candidate, parse_cv
+from app.services.structured_output import InvalidLLMOutputError
 from tests.fakes import FakeLLMClient
 
 INVALID_JSON = '{"match_score": 150}'
@@ -42,7 +43,7 @@ def test_invalid_answer_is_retried_with_the_error(fake_llm: FakeLLMClient, valid
 def test_gives_up_after_two_calls(fake_llm: FakeLLMClient) -> None:
     fake_llm.json_answers = [INVALID_JSON, INVALID_JSON]
 
-    with pytest.raises(CVParsingError):
+    with pytest.raises(InvalidLLMOutputError):
         asyncio.run(parse_cv(fake_llm, "CV de Jean"))
 
     assert len(fake_llm.json_calls) == 2

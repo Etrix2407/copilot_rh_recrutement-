@@ -8,6 +8,9 @@ python-multipart==0.0.32
 # CV
 pdfplumber==0.11.10
 
+# RAG : base vectorielle et modèle d'embedding par défaut
+chromadb==1.5.9
+
 # LLM
 google-genai==2.30.0
 # Client HTTP utilisé par google-genai : importé dans app/llm/gemini.py pour capter les erreurs réseau

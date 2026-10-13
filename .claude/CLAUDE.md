@@ -83,15 +83,17 @@ app/
   main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (app.state)
   config.py        # Settings (pydantic-settings) lus depuis .env
   logging_config.py
-  api/             # routes FastAPI (health.py, candidates.py…) ; dependencies.py donne un accès typé à app.state
+  api/             # routes FastAPI (health.py, candidates.py, rag.py…) ; dependencies.py donne un accès typé à app.state
   llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
   data/            # données du cahier des charges, contenu identique, noms traduits
-  models/          # schémas Pydantic (candidate.py, cv_analysis.py…)
-  services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py…)
+  models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py…)
+  services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py,
+                   #   structured_output.py, policy_index.py, hr_assistant.py…)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
-tests/             # pytest ; conftest.py fournit test_settings, fake_llm et client (sans .env ni réseau)
-  fakes.py         # FakeLLMClient (réponses prévues) et build_pdf
+tests/             # pytest ; conftest.py fournit test_settings, fake_llm, policy_index et client (sans .env ni réseau)
+  fakes.py         # FakeLLMClient (réponses prévues), FakeEmbeddingFunction et build_pdf
+  real_llm.py      # run_with_real_llm : appel au vrai LLM dans les tests -m llm
   fixtures/cvs/    # CVs atypiques fictifs pour les tests de robustesse (-m llm)
 ```
 
@@ -120,4 +122,6 @@ Détail dans `docs/cahier_des_charges.md`, section 8 :
 <!-- Ajoute ici au fil du projet : choix faits, pièges rencontrés, choses à ne pas refaire. -->
 
 - `RECRUITER_AGENDA` est modifié en mémoire par `reserver_entretien` : tout test qui réserve un créneau doit remettre l'agenda à son état initial, sinon `tests/test_data.py` échoue selon l'ordre des tests.
-- Dans les tests `-m llm`, créer un client Gemini par test : un client ne survit pas à la fin de son `asyncio.run` (erreur « Event loop is closed »). Dans l'API, uvicorn n'a qu'une boucle, donc un seul client suffit.
+- Dans les tests `-m llm`, passer par `run_with_real_llm` : un client Gemini ne survit pas à la fin de son `asyncio.run` (erreur « Event loop is closed »). Dans l'API, uvicorn n'a qu'une boucle, donc un seul client suffit.
+- Le SDK Gemini bascule sur aiohttp dès qu'il est installé (ChromaDB l'installe) : `GeminiClient` lui impose un transport httpx, sinon les erreurs réseau échappent à `LLMError`.
+- Le refus RAG est rédigé par le code (`REFUSAL`), jamais par le LLM : il renvoie seulement `answered: false`. Une réponse sans source valide est aussi refusée.

@@ -2,8 +2,6 @@ import asyncio
 
 import httpx
 import pytest
-from google.genai import types
-from google.genai.models import AsyncModels
 
 from app.llm import gemini
 from app.llm.base import LLMError
@@ -59,11 +57,13 @@ def test_client_error_is_not_retried() -> None:
 
 
 def test_network_error_becomes_llm_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def unreachable(*args: object, **kwargs: object) -> types.GenerateContentResponse:
+    async def unreachable(self: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("All connection attempts failed")
 
-    # On remplace l'appel réseau du SDK : aucun appel réel à Gemini
-    monkeypatch.setattr(AsyncModels, "generate_content", unreachable)
+    # Coupure simulée dans le transport httpx par défaut : aucun appel réel à Gemini.
+    # Le client est créé sans transport, comme dans l'application : si le SDK passait
+    # par aiohttp, il ignorerait ce transport et le test échouerait.
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", unreachable)
     client = GeminiClient(api_key="fake-key", model="test-model")
 
     with pytest.raises(LLMError, match="injoignable"):
