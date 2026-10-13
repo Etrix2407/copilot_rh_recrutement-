@@ -1,7 +1,9 @@
 from fastapi.testclient import TestClient
 
 from app.llm.gemini import GeminiClient
+from app.data.hr_policies import HR_POLICIES
 from app.services.candidate_store import CandidateStore
+from app.services.policy_index import PolicyIndex
 
 
 def test_startup_creates_shared_objects(client: TestClient) -> None:
@@ -9,6 +11,11 @@ def test_startup_creates_shared_objects(client: TestClient) -> None:
 
     assert isinstance(state.llm_client, GeminiClient)
     assert isinstance(state.candidate_store, CandidateStore)
+    assert isinstance(state.policy_index, PolicyIndex)
+
+
+def test_startup_indexes_every_hr_policy(client: TestClient) -> None:
+    assert client.app.state.policy_index.count() == len(HR_POLICIES)
 
 
 def test_cors_allows_configured_origin(client: TestClient) -> None:

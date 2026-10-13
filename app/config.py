@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr
 
     embedding_model: str = "all-MiniLM-L6-v2"
+    # Dossier où ChromaDB sauvegarde la base vectorielle
+    chroma_path: str = "chroma_db"
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # Origines autorisées à appeler l'API depuis un navigateur (5173 : serveur de dev Vite)
     cors_origins: list[str] = ["http://localhost:5173"]
