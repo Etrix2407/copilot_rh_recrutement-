@@ -1,0 +1,85 @@
+# CLAUDE.md — Plateforme SaaS RH & Assistant Copilot de Recrutement
+
+<!-- À COMPLÉTER : la section Structure, une fois les premiers dossiers créés.
+     Ce commentaire peut ensuite être supprimé. -->
+
+## Le projet
+
+Application RH en Python avec 4 piliers LLM :
+1. **Parsing de CV** → JSON strict validé par Pydantic (score 0-100, compétences, justifications, points de vigilance)
+2. **Assistant RH RAG** → répond uniquement à partir des politiques RH indexées
+3. **Agent de qualification** → tool calling (recherche et réservation de créneaux, statut candidat)
+4. **Chat en streaming SSE** → texte mot à mot + événements d'outils
+
+Documents de référence :
+- `docs/cahier_des_charges.md` : fait foi en cas de doute (données, endpoints, tests officiels)
+- `docs/plan_de_developpement.md` : les étapes dans l'ordre, avec leurs critères de fin
+
+## Comment travailler avec moi
+
+- **Tu codes, je relis.** Écris le code, je fais la revue avant de valider.
+- Travaille une étape du plan à la fois, en petits changements faciles à relire. Ne passe pas à l'étape suivante sans mon accord.
+- Avant de commencer, annonce le plan en quelques lignes et attends mon accord.
+- Après chaque modification, lance `pytest` et corrige ce qui casse.
+- À la fin, résume pour ma revue : fichiers modifiés, choix faits et pourquoi, points à vérifier en priorité.
+- Quand tu repères une erreur ou une meilleure approche, dis-le, même si je n'ai rien demandé.
+- Réponds en français. Code et noms (variables, fonctions, classes, fichiers) en anglais uniquement ; commentaires, docstrings et fichiers Markdown en français.
+  Les noms venant du cahier des charges sont traduits en anglais, avec le nom français d'origine en commentaire juste au-dessus (ex. `# POLITIQUES_RH` au-dessus de `HR_POLICIES`). Seul le nom change : le contenu des données reste identique.
+  Exception : `rechercher_creneaux_entretien` et `reserver_entretien` gardent leur nom français, car le cahier des charges (section 6) impose « mêmes noms, paramètres et docstrings ».
+
+## Stack
+
+- Python 3.11+ dans un venv (`venv/`)
+- FastAPI + uvicorn, Pydantic, pydantic-settings, python-multipart
+- LLM : fournisseur et modèle interchangeables. Ils sont lus depuis `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`) via la config centralisée, jamais codés en dur. Fournisseur de départ : **Gemini** (SDK `google-genai`, clé gratuite via Google AI Studio). Le reste du code passe par une couche d'abstraction (un adaptateur par fournisseur) et n'importe jamais directement un SDK de fournisseur.
+- Embeddings : fonction d'embedding par défaut de ChromaDB (`all-MiniLM-L6-v2`, locale, sans clé ni coût). Le modèle est lu depuis `.env` (`EMBEDDING_MODEL`) ; si le test officiel RAG échoue sur le français, passer à `paraphrase-multilingual-MiniLM-L12-v2`.
+- Base vectorielle : ChromaDB
+- PDF : pdfplumber
+- SSE : sse-starlette
+- Tests : pytest + httpx
+
+## Commandes
+
+```bash
+# Windows PowerShell
+venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload    # API → http://localhost:8000/docs
+pytest                           # tous les tests
+```
+
+## Architecture
+
+Architecture en couches (routes → services → infrastructure), avec ports et adaptateurs pour le LLM.
+
+- Les routes (`app/api/`) ne contiennent aucune logique métier : elles valident l'entrée, appellent un service et renvoient la réponse.
+- Les services (`app/services/`) ne dépendent pas de FastAPI.
+- Aucun appel direct à un SDK de LLM en dehors de `app/llm/`. Fournisseur et modèles uniquement via le `.env`.
+- Les outils de l'agent (`app/tools/`) sont de simples fonctions, testables sans LLM.
+
+## Structure
+
+un readme en français pour github à la racine du projet
+Pas encore créée : explore le dépôt pour connaître l'arborescence réelle.
+
+## Règles à ne jamais enfreindre
+
+IMPORTANT :
+- **Ne jamais modifier le contenu des données fournies** par le cahier des charges : POLITIQUES_RH, OFFRE_POSTE_DEV_PYTHON, CANDIDAT_EXEMPLE_1/2, AGENDA_RECRUTEUR (les noms de variables sont traduits, voir « Comment travailler avec moi »).
+- **Ne pas changer** le nom, les paramètres ni les docstrings de `rechercher_creneaux_entretien` et `reserver_entretien`.
+- Refus du RAG : la réponse doit dire que **la politique interne ne précise pas ce point**.
+- Parsing : température 0.0, sortie validée par Pydantic, 2 relances maximum en cas d'erreur.
+- Agent : toujours `rechercher_creneaux_entretien` avant `reserver_entretien`.
+- Clés API uniquement dans `.env`, jamais dans le code ni dans Git.
+- Ne pas journaliser le contenu complet des CVs.
+
+## Tests officiels (doivent toujours passer)
+
+Détail dans `docs/cahier_des_charges.md`, section 8 :
+1. Jean Dupont > 80 avec FastAPI/RAG ; Sophie Martin < 40
+2. RTT + CET → réponse sourcée ; prime de naissance → refus
+3. « Trouve-moi un créneau le 2026-10-15 … Jean Dupont » → recherche puis réservation
+
+## Notes & décisions
+
+<!-- Ajoute ici au fil du projet : choix faits, pièges rencontrés, choses à ne pas refaire. -->
