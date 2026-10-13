@@ -1,0 +1,13 @@
+Thomas Leroy - Développeur Python
+thomas.leroy@example.com
+
+EXPÉRIENCES
+2023 - 2025 : Développeur Python freelance (missions courtes, API Django REST)
+2016 - 2018 : Développeur backend chez MediaSoft (Python 2, scripts d'automatisation)
+2012 - 2014 : Technicien support informatique chez HelpDesk Pro
+
+FORMATION
+BTS Services Informatiques aux Organisations (2012)
+
+COMPÉTENCES
+Python, Django, Linux, Bash
