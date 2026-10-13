@@ -100,7 +100,7 @@ IMPORTANT :
 - **Ne jamais modifier le contenu des données fournies** par le cahier des charges : POLITIQUES_RH, OFFRE_POSTE_DEV_PYTHON, CANDIDAT_EXEMPLE_1/2, AGENDA_RECRUTEUR (les noms de variables sont traduits, voir « Comment travailler avec moi »).
 - **Ne pas changer** le nom, les paramètres ni les docstrings de `rechercher_creneaux_entretien` et `reserver_entretien`.
 - Refus du RAG : la réponse doit dire que **la politique interne ne précise pas ce point**.
-- Parsing : température 0.0, sortie validée par Pydantic, 2 relances maximum en cas d'erreur.
+- Parsing : température 0.0, sortie validée par Pydantic, 2 appels maximum (1 appel + 1 relance si la réponse est invalide).
 - Agent : toujours `rechercher_creneaux_entretien` avant `reserver_entretien`.
 - Clés API uniquement dans `.env`, jamais dans le code ni dans Git.
 - Ne pas journaliser le contenu complet des CVs.
