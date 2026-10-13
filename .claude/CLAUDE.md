@@ -33,13 +33,14 @@ Documents de référence :
 - Base vectorielle : ChromaDB
 - PDF : pdfplumber
 - SSE : sse-starlette
-- Tests : pytest + httpx
+- Tests : pytest + httpx2 (pour le `TestClient`)
 
 ## Règles de code
 
 - Code simple et lisible, sans dépendance superflue.
 - Ne pas ajouter de bibliothèque (UI, Markdown, état, etc.) sans demande explicite.
 - Respecter les bonnes pratiques python
+- En cas de dépréciation (avertissement, doc, changelog), passer directement à l'alternative recommandée, même si cela ajoute ou remplace une dépendance.
 
 ## Workflow Git
 

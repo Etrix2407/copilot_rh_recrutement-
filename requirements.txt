@@ -9,4 +9,5 @@ google-genai==2.30.0
 
 # Tests
 pytest==9.1.1
-httpx==0.28.1
+# Client HTTP du TestClient de Starlette (remplace httpx, déprécié pour cet usage)
+httpx2==2.13.1
