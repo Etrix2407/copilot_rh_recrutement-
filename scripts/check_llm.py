@@ -12,7 +12,10 @@ from app.llm.factory import create_llm_client
 async def main() -> None:
     settings = get_settings()
     client = create_llm_client(settings)
-    answer = await client.generate("Réponds uniquement par le mot : ok")
+    try:
+        answer = await client.generate("Réponds uniquement par le mot : ok")
+    finally:
+        await client.aclose()
     print(f"{settings.llm_provider} / {settings.llm_model} -> {answer.strip()}")
 
 

@@ -48,3 +48,7 @@ class LLMClient(Protocol):
         Lève LLMError si l'appel échoue.
         """
         ...
+
+    async def aclose(self) -> None:
+        """Ferme les connexions réseau ouvertes par le client."""
+        ...

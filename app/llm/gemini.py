@@ -26,11 +26,17 @@ TRANSIENT_ERROR_RETRY = types.HttpRetryOptions(
 class GeminiClient:
     def __init__(self, *, api_key: str, model: str, transport: httpx.AsyncBaseTransport | None = None) -> None:
         """transport permet aux tests de simuler les réponses HTTP de Gemini sans réseau."""
-        http_options = types.HttpOptions(retry_options=TRANSIENT_ERROR_RETRY)
-        if transport is not None:
-            http_options.async_client_args = {"transport": transport}
+        http_options = types.HttpOptions(
+            retry_options=TRANSIENT_ERROR_RETRY,
+            # Un transport httpx explicite empêche le SDK de basculer sur aiohttp dès qu'il est installé
+            # (ChromaDB l'installe) : ses erreurs réseau échapperaient alors à la conversion en LLMError.
+            async_client_args={"transport": transport or httpx.AsyncHTTPTransport()},
+        )
         self._client = genai.Client(api_key=api_key, http_options=http_options)
         self._model = model
+
+    async def aclose(self) -> None:
+        await self._client.aio.aclose()
 
     async def generate(self, prompt: str) -> str:
         return await self._generate_text(contents=prompt, config=None)
