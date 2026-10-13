@@ -3,6 +3,7 @@
 import uuid
 
 from app.models.candidate import Candidate, CandidateStatus
+from app.models.cv_analysis import CVAnalysis
 
 # Parcours d'un candidat : nouveau → analysé → entretien planifié → retenu / refusé.
 # Un candidat analysé peut aussi être refusé sans entretien.
@@ -47,9 +48,16 @@ class CandidateStore:
         return list(self._candidates.values())
 
     def update_status(self, candidate_id: str, status: CandidateStatus) -> Candidate:
+        return self._transition(candidate_id, status)
+
+    def record_analysis(self, candidate_id: str, analysis: CVAnalysis) -> Candidate:
+        """Enregistre l'analyse du CV et passe le candidat au statut « analysé »."""
+        return self._transition(candidate_id, CandidateStatus.ANALYZED, analysis=analysis)
+
+    def _transition(self, candidate_id: str, status: CandidateStatus, **changes: object) -> Candidate:
         candidate = self.get(candidate_id)
         if status not in ALLOWED_TRANSITIONS[candidate.status]:
             raise InvalidStatusTransitionError(candidate.status, status)
-        updated = candidate.model_copy(update={"status": status})
+        updated = candidate.model_copy(update={"status": status, **changes})
         self._candidates[candidate_id] = updated
         return updated
