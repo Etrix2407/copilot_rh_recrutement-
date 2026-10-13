@@ -38,6 +38,23 @@ Documents de référence :
 - SSE : sse-starlette
 - Tests : pytest + httpx
 
+## Règles de code
+
+- Code simple et lisible, sans dépendance superflue.
+- Ne pas ajouter de bibliothèque (UI, Markdown, état, etc.) sans demande explicite.
+- Respecter les bonnes pratiques python
+
+## Workflow Git
+
+- La branche `main` est protégée : ne jamais pousser directement dessus.
+- Pour toute modification : créer une branche (`git checkout -b <nom-court>`), committer, pousser la branche, puis ouvrir une pull request.
+- Messages de commit courts, à l'impératif, en français (ex. : « Ajoute la section compétences »).
+- Un commit = un changement cohérent.
+- Ne jamais utiliser `git push --force`, `git reset --hard` ni supprimer de branche distante.
+- une branche = une feature
+- Demander confirmation avant chaque commit et chaque push.
+- Ne jamais committer de secrets, de clés API ou de données personnelles non destinées à être publiques (adresse postale complète, numéro de téléphone, etc.) sans validation.
+
 ## Commandes
 
 ```bash
