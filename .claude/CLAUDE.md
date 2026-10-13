@@ -59,7 +59,8 @@ Documents de référence :
 # Windows PowerShell
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload    # API → http://localhost:8000/docs
+uvicorn app.main:create_app --factory --reload    # API → http://localhost:8000/docs
+python -m scripts.check_llm      # vérifie l'appel réel au LLM
 pytest                           # tous les tests
 ```
 
@@ -78,16 +79,20 @@ un readme en français pour github à la racine du projet
 
 ```
 app/
-  main.py          # création de l'app FastAPI, enregistrement des routes
+  main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (app.state)
   config.py        # Settings (pydantic-settings) lus depuis .env
+  logging_config.py
   api/             # routes FastAPI (health.py…)
   llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
+  data/            # données du cahier des charges, contenu identique, noms traduits
+  models/          # schémas Pydantic (candidate.py…)
+  services/        # logique métier, sans FastAPI (candidate_store.py…)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
-tests/             # pytest ; pythonpath configuré dans pyproject.toml
+tests/             # pytest ; conftest.py fournit test_settings et client (sans .env ni réseau)
 ```
 
-À créer au fil des étapes : `app/services/`, `app/models/`, `app/data/`, `app/tools/`, `frontend/`.
+À créer au fil des étapes : `app/tools/`, `frontend/`.
 
 ## Règles à ne jamais enfreindre
 
@@ -110,3 +115,5 @@ Détail dans `docs/cahier_des_charges.md`, section 8 :
 ## Notes & décisions
 
 <!-- Ajoute ici au fil du projet : choix faits, pièges rencontrés, choses à ne pas refaire. -->
+
+- `RECRUITER_AGENDA` est modifié en mémoire par `reserver_entretien` : tout test qui réserve un créneau doit remettre l'agenda à son état initial, sinon `tests/test_data.py` échoue selon l'ordre des tests.

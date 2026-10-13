@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     embedding_model: str = "all-MiniLM-L6-v2"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # Origines autorisées à appeler l'API depuis un navigateur (5173 : serveur de dev Vite)
+    cors_origins: list[str] = ["http://localhost:5173"]
 
 
 @lru_cache
