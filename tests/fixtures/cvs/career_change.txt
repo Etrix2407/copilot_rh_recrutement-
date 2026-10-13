@@ -1,0 +1,15 @@
+Claire Fontaine
+claire.fontaine@example.com
+
+Infirmière pendant 10 ans, en reconversion vers le développement depuis 2024.
+
+PARCOURS
+2024 - 2025 : Formation « Développeur d'applications Python » (titre RNCP niveau 6), OpenClassrooms
+  Projets : API de prise de rendez-vous avec FastAPI, chatbot utilisant l'API OpenAI
+2014 - 2024 : Infirmière en service de réanimation, CHU de Nantes
+
+FORMATION INITIALE
+Diplôme d'État d'infirmière (2014)
+
+COMPÉTENCES
+Python, FastAPI, SQL, Git, gestion du stress, travail en équipe

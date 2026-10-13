@@ -1,0 +1,12 @@
+Lucas Bernard                              COMPÉTENCES
+Développeur Backend                        Python ★★★★☆
+lucas.bernard@example.com                  Flask ★★★☆☆
+EXPÉRIENCE                                 Docker ★★★☆☆
+2019 - 2024 Développeur Python chez        PostgreSQL ★★★★☆
+Logistix : API Flask, tâches Celery,       LANGUES
+migration vers Docker.                     Anglais : courant
+2017 - 2019 Développeur PHP chez           Espagnol : notions
+WebFactory.                                CENTRES D'INTÉRÊT
+FORMATION                                  Escalade, échecs
+Licence professionnelle informatique
+(2017)

@@ -1,0 +1,1 @@
+nom: marie dubois    mail marie.dubois@example.com   exp 2018-2025 data engineer chez retailco - airflow spark python - pipelines etl - un peu de fastapi pour exposer des modeles - 2016-2018 analyste bi (powerbi sql)   diplome ecole d'ingenieur 2016   skills python sql spark airflow docker aws fastapi   langues fr en

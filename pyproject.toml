@@ -2,3 +2,8 @@
 # Permet aux tests d'importer le paquet app depuis la racine
 pythonpath = ["."]
 testpaths = ["tests"]
+# Les tests qui appellent le vrai LLM ne tournent qu'avec : pytest -m llm
+addopts = "-m 'not llm'"
+markers = [
+    "llm: appelle le vrai LLM configuré dans .env (réseau et quota)",
+]

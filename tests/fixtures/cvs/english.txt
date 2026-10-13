@@ -1,0 +1,18 @@
+Emily Carter — Machine Learning Engineer
+emily.carter@example.com | London, UK
+
+SUMMARY
+ML engineer with 7 years of experience building NLP products in Python.
+
+EXPERIENCE
+2020 – present  Lead ML Engineer, DataNova Ltd
+  • Designed a retrieval-augmented question answering service (FastAPI, Qdrant, OpenAI embeddings)
+  • Containerised every service with Docker and Kubernetes
+2017 – 2020  Data Scientist, Insightly
+  • Built text classification pipelines with scikit-learn and spaCy
+
+EDUCATION
+MSc Computer Science, University of Edinburgh (2017)
+
+SKILLS
+Python, FastAPI, Pydantic, Qdrant, Docker, Kubernetes, PyTorch, SQL

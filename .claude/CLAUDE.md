@@ -61,7 +61,8 @@ venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:create_app --factory --reload    # API → http://localhost:8000/docs
 python -m scripts.check_llm      # vérifie l'appel réel au LLM
-pytest                           # tous les tests
+pytest                           # tests rapides, sans réseau (faux LLM)
+pytest -m llm                    # tests officiels avec le vrai LLM (consomme du quota)
 ```
 
 ## Architecture
@@ -82,14 +83,16 @@ app/
   main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (app.state)
   config.py        # Settings (pydantic-settings) lus depuis .env
   logging_config.py
-  api/             # routes FastAPI (health.py…)
+  api/             # routes FastAPI (health.py, candidates.py…) ; dependencies.py donne un accès typé à app.state
   llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
   data/            # données du cahier des charges, contenu identique, noms traduits
-  models/          # schémas Pydantic (candidate.py…)
-  services/        # logique métier, sans FastAPI (candidate_store.py…)
+  models/          # schémas Pydantic (candidate.py, cv_analysis.py…)
+  services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py…)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
-tests/             # pytest ; conftest.py fournit test_settings et client (sans .env ni réseau)
+tests/             # pytest ; conftest.py fournit test_settings, fake_llm et client (sans .env ni réseau)
+  fakes.py         # FakeLLMClient (réponses prévues) et build_pdf
+  fixtures/cvs/    # CVs atypiques fictifs pour les tests de robustesse (-m llm)
 ```
 
 À créer au fil des étapes : `app/tools/`, `frontend/`.
@@ -100,7 +103,7 @@ IMPORTANT :
 - **Ne jamais modifier le contenu des données fournies** par le cahier des charges : POLITIQUES_RH, OFFRE_POSTE_DEV_PYTHON, CANDIDAT_EXEMPLE_1/2, AGENDA_RECRUTEUR (les noms de variables sont traduits, voir « Comment travailler avec moi »).
 - **Ne pas changer** le nom, les paramètres ni les docstrings de `rechercher_creneaux_entretien` et `reserver_entretien`.
 - Refus du RAG : la réponse doit dire que **la politique interne ne précise pas ce point**.
-- Parsing : température 0.0, sortie validée par Pydantic, 2 relances maximum en cas d'erreur.
+- Parsing : température 0.0, sortie validée par Pydantic, 2 appels maximum (1 appel + 1 relance si la réponse est invalide).
 - Agent : toujours `rechercher_creneaux_entretien` avant `reserver_entretien`.
 - Clés API uniquement dans `.env`, jamais dans le code ni dans Git.
 - Ne pas journaliser le contenu complet des CVs.
@@ -117,3 +120,4 @@ Détail dans `docs/cahier_des_charges.md`, section 8 :
 <!-- Ajoute ici au fil du projet : choix faits, pièges rencontrés, choses à ne pas refaire. -->
 
 - `RECRUITER_AGENDA` est modifié en mémoire par `reserver_entretien` : tout test qui réserve un créneau doit remettre l'agenda à son état initial, sinon `tests/test_data.py` échoue selon l'ordre des tests.
+- Dans les tests `-m llm`, créer un client Gemini par test : un client ne survit pas à la fin de son `asyncio.run` (erreur « Event loop is closed »). Dans l'API, uvicorn n'a qu'une boucle, donc un seul client suffit.

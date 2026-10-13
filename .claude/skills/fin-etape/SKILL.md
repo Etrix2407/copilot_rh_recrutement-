@@ -39,7 +39,7 @@ Sur `git diff` depuis le début de l'étape (ou `git diff main...HEAD` + modific
 - `rechercher_creneaux_entretien` et `reserver_entretien` : nom, paramètres et docstrings intacts.
 - Aucune clé API ni secret dans le diff ; `.env` toujours ignoré par Git.
 - Aucun log qui écrit le contenu complet d'un CV.
-- Selon l'étape : parsing à température 0.0 + validation Pydantic + 2 relances max ; refus RAG formulé « la politique interne ne précise pas ce point » ; agent qui recherche avant de réserver.
+- Selon l'étape : parsing à température 0.0 + validation Pydantic + 2 appels max (1 appel + 1 relance) ; refus RAG formulé « la politique interne ne précise pas ce point » ; agent qui recherche avant de réserver.
 
 Ne cite que les règles qui concernent l'étape, et signale toute violation en tête du rapport.
 
