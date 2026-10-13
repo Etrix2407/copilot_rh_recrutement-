@@ -6,6 +6,8 @@ pydantic-settings==2.15.0
 
 # LLM
 google-genai==2.30.0
+# Client HTTP utilisé par google-genai : importé dans app/llm/gemini.py pour capter les erreurs réseau
+httpx==0.28.1
 
 # Tests
 pytest==9.1.1

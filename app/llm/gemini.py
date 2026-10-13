@@ -1,5 +1,6 @@
 """Adaptateur Gemini : seul module autorisé à importer le SDK google-genai."""
 
+import httpx
 from google import genai
 from google.genai import errors
 
@@ -19,6 +20,9 @@ class GeminiClient:
             )
         except errors.APIError as exc:
             raise LLMError(f"Appel à Gemini ({self._model}) échoué : {exc}") from exc
+        # Le SDK laisse passer les erreurs réseau (connexion, timeout) de son client httpx
+        except httpx.HTTPError as exc:
+            raise LLMError(f"Gemini ({self._model}) injoignable : {exc}") from exc
 
         # text vaut None si la réponse a été bloquée ou ne contient pas de texte
         if not response.text:
