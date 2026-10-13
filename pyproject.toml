@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+# Permet aux tests d'importer le paquet app depuis la racine
+pythonpath = ["."]
+testpaths = ["tests"]
