@@ -1,8 +1,5 @@
 # CLAUDE.md — Plateforme SaaS RH & Assistant Copilot de Recrutement
 
-<!-- À COMPLÉTER : la section Structure, une fois les premiers dossiers créés.
-     Ce commentaire peut ensuite être supprimé. -->
-
 ## Le projet
 
 Application RH en Python avec 4 piliers LLM :
@@ -77,7 +74,19 @@ Architecture en couches (routes → services → infrastructure), avec ports et 
 ## Structure
 
 un readme en français pour github à la racine du projet
-Pas encore créée : explore le dépôt pour connaître l'arborescence réelle.
+
+```
+app/
+  main.py          # création de l'app FastAPI, enregistrement des routes
+  config.py        # Settings (pydantic-settings) lus depuis .env
+  api/             # routes FastAPI (health.py…)
+  llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
+scripts/
+  check_llm.py     # appel réel au LLM : python -m scripts.check_llm
+tests/             # pytest ; pythonpath configuré dans pyproject.toml
+```
+
+À créer au fil des étapes : `app/services/`, `app/models/`, `app/data/`, `app/tools/`, `frontend/`.
 
 ## Règles à ne jamais enfreindre
 
