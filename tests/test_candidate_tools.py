@@ -59,3 +59,16 @@ def test_refuses_ambiguous_name(store: CandidateStore) -> None:
 
     assert result["statut"] == "ERREUR"
     assert "Plusieurs candidats" in result["message"]
+    assert "précisez l'email" in result["message"]
+
+
+def test_email_resolves_homonyms(store: CandidateStore) -> None:
+    other = store.add(name="Jean Dupont", email="autre.jean@email.com")
+    jean = store.add(name="Jean Dupont", email="jean.dupont@email.com")
+    store.update_status(jean.id, CandidateStatus.ANALYZED)
+
+    result = update_candidate_status(store, "JEAN.DUPONT@email.com", "rejected")
+
+    assert result["statut"] == "SUCCES"
+    assert store.get(jean.id).status is CandidateStatus.REJECTED
+    assert store.get(other.id).status is not CandidateStatus.REJECTED
