@@ -4,12 +4,31 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app.api.dependencies import CandidateStoreDep, LLMClientDep
 from app.llm.base import LLMError
-from app.models.candidate import Candidate
+from app.data.candidates import SAMPLE_CANDIDATE_1, SAMPLE_CANDIDATE_2
+from app.models.candidate import Candidate, CVSample
 from app.services.cv_parser import analyze_candidate
 from app.services.cv_reader import CVReadError, read_cv_file
 from app.services.structured_output import InvalidLLMOutputError
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
+
+# Contenu identique au cahier des charges (section 5)
+CV_SAMPLES = [
+    CVSample(label="Jean Dupont", text=SAMPLE_CANDIDATE_1),
+    CVSample(label="Sophie Martin", text=SAMPLE_CANDIDATE_2),
+]
+
+
+@router.get("")
+def list_candidates(store: CandidateStoreDep) -> list[Candidate]:
+    """Renvoie tous les candidats suivis, avec leur statut et leur analyse."""
+    return store.list_all()
+
+
+@router.get("/samples")
+def list_cv_samples() -> list[CVSample]:
+    """Renvoie les CVs d'exemple du cahier des charges, pour essayer l'analyse sans fichier."""
+    return CV_SAMPLES
 
 
 @router.post("/parse")

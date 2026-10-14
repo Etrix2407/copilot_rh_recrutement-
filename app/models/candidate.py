@@ -25,3 +25,12 @@ class Candidate(BaseModel):
     status: CandidateStatus = CandidateStatus.NEW
     # Renseignée quand le candidat passe au statut « analysé »
     analysis: CVAnalysis | None = None
+
+
+class CVSample(BaseModel):
+    """CV d'exemple du cahier des charges, proposé dans l'interface pour la démo."""
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    text: str
