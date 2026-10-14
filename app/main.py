@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api import agent, candidates, health, interviews, rag
+from app.api.errors import install_error_handlers
+from app.api.rate_limit import RateLimiter
 from app.config import Settings, get_settings
 from app.data.hr_policies import HR_POLICIES
 from app.llm.base import LLMClient
@@ -37,6 +39,8 @@ class AppState(TypedDict):
     candidate_store: CandidateStore
     policy_index: PolicyIndex
     conversation_store: ConversationStore
+    rate_limiter: RateLimiter
+    settings: Settings
 
 
 def create_app(
@@ -56,24 +60,32 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[AppState]:
         # Créés une seule fois au démarrage ; Starlette les copie dans request.state à chaque requête
         llm_client = create_llm_client(settings)
+        candidate_store = CandidateStore(settings.database_path)
         policy_index = build_policy_index(settings, embedding_function)
         logger.info("API démarrée (LLM : %s / %s)", settings.llm_provider, settings.llm_model)
-        yield {
-            "llm_client": llm_client,
-            "candidate_store": CandidateStore(),
-            "policy_index": policy_index,
-            "conversation_store": ConversationStore(),
-        }
-        await llm_client.aclose()
+        try:
+            yield {
+                "llm_client": llm_client,
+                "candidate_store": candidate_store,
+                "policy_index": policy_index,
+                "conversation_store": ConversationStore(),
+                "rate_limiter": RateLimiter(settings.llm_requests_per_minute),
+                "settings": settings,
+            }
+        finally:
+            # Fermeture garantie, même si l'arrêt fait suite à une erreur
+            await llm_client.aclose()
+            candidate_store.close()
 
     app = FastAPI(title="Copilot RH Recrutement", lifespan=lifespan)
+    install_error_handlers(app)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(SecurityMiddleware, allowed_origins=settings.cors_origins)
+    app.add_middleware(SecurityMiddleware, allowed_hosts=settings.allowed_hosts, allowed_origins=settings.cors_origins)
     app.include_router(health.router)
     app.include_router(candidates.router)
     app.include_router(rag.router)
