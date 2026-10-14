@@ -1,5 +1,4 @@
 import asyncio
-import unicodedata
 from collections.abc import AsyncIterator, Callable
 
 import pytest
@@ -7,14 +6,13 @@ import pytest
 from app.llm.base import LLMError, Message, Role, ToolCall
 from app.models.agent import AgentEvent, DoneEvent, ErrorEvent, StartEvent, TokenEvent, ToolResultEvent
 from app.services.agent_chat import (
-    CONVERSATION_TOO_LONG,
     INTERRUPTED,
     MAX_HISTORY_MESSAGES,
-    MAX_TRACKED_ERASURES,
     TURN_TIMEOUT_SECONDS,
     UNEXPECTED_ERROR,
     ConversationNotFoundError,
     ConversationStore,
+    ConversationTooLongError,
     chat,
 )
 from app.services.candidate_store import CandidateStore
@@ -92,22 +90,13 @@ def test_oldest_conversations_are_forgotten() -> None:
     assert conversations.open("c") == ("c", [])
 
 
-def test_too_long_conversation_is_refused(fake_llm: FakeLLMClient) -> None:
-    history = [Message(role=Role.USER, content="…")] * MAX_HISTORY_MESSAGES
+def test_too_long_conversation_cannot_be_continued() -> None:
+    # Contrôlé à l'ouverture, avant le quota et le flux : l'API renvoie alors 409
+    conversations = ConversationStore()
+    conversations.save("long", [Message(role=Role.USER, content="…")] * MAX_HISTORY_MESSAGES)
 
-    async def collect() -> list[AgentEvent]:
-        stream = chat(
-            "Encore ?",
-            conversation_id="long",
-            history=history,
-            llm=fake_llm,
-            store=CandidateStore(),
-            conversations=ConversationStore(),
-        )
-        return [event async for event in stream]
-
-    assert asyncio.run(collect()) == [StartEvent(conversation_id="long"), ErrorEvent(message=CONVERSATION_TOO_LONG)]
-    assert fake_llm.tool_calls == []
+    with pytest.raises(ConversationTooLongError):
+        conversations.open("long")
 
 
 def test_interrupted_answer_keeps_the_tools_already_run(fake_llm: FakeLLMClient) -> None:
@@ -123,45 +112,15 @@ def test_interrupted_answer_keeps_the_tools_already_run(fake_llm: FakeLLMClient)
     assert history[-1].content == INTERRUPTED
 
 
-def test_forget_mentions_erases_conversations_about_a_candidate() -> None:
+def test_forget_all_erases_every_conversation() -> None:
     conversations = ConversationStore()
-    conversations.save("a", [Message(role=Role.USER, content="Réserve Jean Dupont (JEAN.dupont@email.com)")])
+    conversations.save("a", [Message(role=Role.USER, content="Réserve Jean Dupont")])
     conversations.save("b", [Message(role=Role.USER, content="Bonjour")])
 
-    forgotten = conversations.forget_mentions(["jean.dupont@email.com", "Jean Dupont"])
-
-    assert forgotten == 1
-    with pytest.raises(ConversationNotFoundError):
-        conversations.open("a")
-    assert conversations.open("b")[1]
-
-
-def test_forget_mentions_ignores_empty_terms() -> None:
-    conversations = ConversationStore()
-    conversations.save("a", [Message(role=Role.USER, content="Bonjour")])
-
-    assert conversations.forget_mentions(["", "   "]) == 0
-
-
-def test_too_long_conversation_saves_nothing(fake_llm: FakeLLMClient) -> None:
-    conversations = ConversationStore()
-    history = [Message(role=Role.USER, content="…")] * MAX_HISTORY_MESSAGES
-
-    async def consume() -> None:
-        stream = chat(
-            "Encore ?",
-            conversation_id="long",
-            history=history,
-            llm=fake_llm,
-            store=CandidateStore(),
-            conversations=conversations,
-        )
-        _ = [event async for event in stream]
-
-    asyncio.run(consume())
-
-    with pytest.raises(ConversationNotFoundError):
-        conversations.open("long")
+    assert conversations.forget_all() == 2
+    for conversation_id in ("a", "b"):
+        with pytest.raises(ConversationNotFoundError):
+            conversations.open(conversation_id)
 
 
 # --- Déconnexion du client pendant la réponse ---
@@ -258,57 +217,16 @@ def test_disconnect_closes_the_llm_stream_immediately() -> None:
     assert asyncio.run(run()) is True
 
 
-# --- Effacement RGPD : recherche par mots entiers, texte normalisé ---
+# --- Effacement RGPD : toutes les conversations sont oubliées ---
 
 
-def test_forget_mentions_matches_whole_words_only() -> None:
-    conversations = ConversationStore()
-    conversations.save("a", [Message(role=Role.USER, content="Quels créneaux libres ? Liste les candidats.")])
-
-    assert conversations.forget_mentions(["Li"]) == 0
-    assert conversations.open("a")[1]
-
-
-@pytest.mark.parametrize(
-    "term",
-    ["Jean  Dupont", unicodedata.normalize("NFD", "Hélène Faure"), "HELENE.faure@Email.com"],
-    ids=["espaces_multiples", "forme_nfd", "email_casse"],
-)
-def test_forget_mentions_normalizes_spaces_unicode_and_case(term: str) -> None:
-    conversations = ConversationStore()
-    conversations.save(
-        "a",
-        [Message(role=Role.USER, content="Réserve Jean Dupont et Hélène Faure (helene.faure@email.com)")],
-    )
-
-    assert conversations.forget_mentions([term]) == 1
-
-
-def booking_conversation_with_binary_signature() -> list[Message]:
-    # Gemini renvoie une « thought signature » en octets, pas forcément de l'UTF-8
-    call = ToolCall(
-        id="1",
-        name="reserver_entretien",
-        arguments={"candidat_nom": "Jean Dupont", "email": "jean.dupont@email.com"},
-        signature=b"\xff\xfe\x00binaire",
-    )
-    return [Message(role=Role.USER, content="Réserve"), Message(role=Role.ASSISTANT, tool_calls=[call])]
-
-
-def test_forget_mentions_ignores_binary_tool_signature() -> None:
-    conversations = ConversationStore()
-    conversations.save("a", booking_conversation_with_binary_signature())
-
-    assert conversations.forget_mentions(["jean.dupont@email.com"]) == 1
-    with pytest.raises(ConversationNotFoundError):
-        conversations.open("a")
-
-
-def test_erase_candidate_forgets_conversation_with_binary_signature() -> None:
+@pytest.mark.parametrize("mention", ["M. Dupont", "DUPONT Jean", "Jean-Pierre D.", "le candidat de ce matin"])
+def test_erase_candidate_forgets_conversations_whatever_the_wording(mention: str) -> None:
+    # Une recherche du nom raterait ces formulations : tout est oublié
     store = CandidateStore()
-    candidate = store.add(name="Paul Martin", email="jean.dupont@email.com")
+    candidate = store.add(name="Jean Dupont", email="jean.dupont@email.com")
     conversations = ConversationStore()
-    conversations.save("a", booking_conversation_with_binary_signature())
+    conversations.save("a", [Message(role=Role.USER, content=f"Réserve {mention}")])
 
     erase_candidate(candidate.id, store=store, conversations=conversations)
 
@@ -322,7 +240,7 @@ def test_erase_candidate_forgets_conversation_with_binary_signature() -> None:
 def chat_with_erasure_midway(
     fake_llm: FakeLLMClient,
     conversations: ConversationStore,
-    erase: Callable[[], None],
+    erase: Callable[[], object],
     *,
     conversation_id: str = "conv-1",
     disconnect: bool = False,
@@ -369,12 +287,18 @@ def test_erasure_during_turn_is_not_undone_by_the_save(fake_llm: FakeLLMClient, 
         conversations.open("conv-1")
 
 
-def test_unrelated_conversation_is_saved_despite_erasure_during_turn(fake_llm: FakeLLMClient) -> None:
+def test_any_turn_in_progress_is_not_saved_after_erasure(fake_llm: FakeLLMClient) -> None:
+    # Même une conversation qui ne cite pas la candidate effacée : elle pourrait la désigner autrement
     conversations = ConversationStore()
+    store = CandidateStore()
+    sophie = store.add(name="Sophie Martin", email=None)
 
-    chat_with_erasure_midway(fake_llm, conversations, lambda: conversations.forget_mentions(["Sophie Martin"]))
+    chat_with_erasure_midway(
+        fake_llm, conversations, lambda: erase_candidate(sophie.id, store=store, conversations=conversations)
+    )
 
-    assert conversations.open("conv-1")[1]
+    with pytest.raises(ConversationNotFoundError):
+        conversations.open("conv-1")
 
 
 def test_conversation_started_after_erasure_is_saved(fake_llm: FakeLLMClient) -> None:
@@ -385,20 +309,6 @@ def test_conversation_started_after_erasure_is_saved(fake_llm: FakeLLMClient) ->
     run_chat(fake_llm, conversations, "conv-2")
 
     assert conversations.open("conv-2")[1]
-
-
-def test_too_many_erasures_during_turn_forget_the_conversation_by_caution() -> None:
-    # Les effacements les plus anciens ne sont plus retenus : impossible de vérifier, donc rien n'est gardé
-    conversations = ConversationStore()
-    seen = conversations.erasure_count
-    for index in range(MAX_TRACKED_ERASURES + 1):
-        conversations.forget_mentions([f"personne{index}"])
-
-    saved = conversations.save("conv-1", [Message(role=Role.USER, content="Bonjour")], erasures_seen=seen)
-
-    assert saved is False
-    with pytest.raises(ConversationNotFoundError):
-        conversations.open("conv-1")
 
 
 # --- Un seul tour à la fois par conversation ---
@@ -415,20 +325,34 @@ class FakeClock:
 def test_conversation_accepts_one_turn_at_a_time() -> None:
     conversations = ConversationStore()
 
-    assert conversations.start_turn("conv-1") is True
-    assert conversations.start_turn("conv-1") is False
-    # Une autre conversation n'est pas concernée
-    assert conversations.start_turn("conv-2") is True
+    token = conversations.start_turn("conv-1")
+    assert token
+    assert conversations.start_turn("conv-1") is None
+    # Une autre conversation n'est pas concernée, et chaque tour a son propre jeton
+    other = conversations.start_turn("conv-2")
+    assert other and other != token
 
 
 def test_turn_is_released_at_the_end_of_chat(fake_llm: FakeLLMClient) -> None:
     conversations = ConversationStore()
-    conversations.start_turn("conv-1")
+    token = conversations.start_turn("conv-1")
     fake_llm.tool_answers = [Message(role=Role.ASSISTANT, content="Salut")]
 
-    run_chat(fake_llm, conversations, "conv-1")
+    async def consume() -> None:
+        stream = chat(
+            "Bonjour",
+            conversation_id="conv-1",
+            history=[],
+            llm=fake_llm,
+            store=CandidateStore(),
+            conversations=conversations,
+            turn_token=token,
+        )
+        _ = [event async for event in stream]
 
-    assert conversations.start_turn("conv-1") is True
+    asyncio.run(consume())
+
+    assert conversations.start_turn("conv-1") is not None
 
 
 def test_turn_expires_when_never_released() -> None:
@@ -437,6 +361,29 @@ def test_turn_expires_when_never_released() -> None:
     conversations.start_turn("conv-1")
 
     clock.now = TURN_TIMEOUT_SECONDS - 1
-    assert conversations.start_turn("conv-1") is False
+    assert conversations.start_turn("conv-1") is None
     clock.now = TURN_TIMEOUT_SECONDS
-    assert conversations.start_turn("conv-1") is True
+    assert conversations.start_turn("conv-1") is not None
+
+
+def test_expired_turn_does_not_release_the_next_one() -> None:
+    # Le premier tour a dépassé l'expiration ; quand il se termine enfin, le tour suivant reste protégé
+    clock = FakeClock()
+    conversations = ConversationStore(clock=clock)
+    late_token = conversations.start_turn("conv-1")
+    clock.now = TURN_TIMEOUT_SECONDS
+    assert conversations.start_turn("conv-1") is not None
+
+    conversations.end_turn("conv-1", late_token)
+
+    assert conversations.start_turn("conv-1") is None
+
+
+def test_new_conversation_is_known_while_its_first_turn_runs() -> None:
+    # L'id reçu dans start pendant le premier tour désigne une conversation occupée, pas inconnue
+    conversations = ConversationStore()
+    conversation_id, _ = conversations.open(None)
+    conversations.start_turn(conversation_id)
+
+    assert conversations.open(conversation_id) == (conversation_id, [])
+    assert conversations.start_turn(conversation_id) is None

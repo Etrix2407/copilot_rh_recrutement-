@@ -1,15 +1,19 @@
 import datetime
 from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.api.agent import open_chat_turn
 from app.api.dependencies import get_conversation_store, get_llm_client
 from app.config import Settings
 from app.llm.base import LLMError, Message, Role, ToolCall
 from app.main import create_app
 from app.messages import LLM_UNAVAILABLE
-from app.services.agent_chat import TURN_TIMEOUT_SECONDS, ConversationStore
+from app.models.agent import ChatRequest
+from app.services.agent_chat import CONVERSATION_TOO_LONG, MAX_HISTORY_MESSAGES, TURN_TIMEOUT_SECONDS, ConversationStore
 from tests.fakes import FakeEmbeddingFunction, FakeLLMClient, parse_sse
 
 CHAT_URL = "/api/agent/chat"
@@ -175,7 +179,7 @@ def test_rate_limited_turn_does_not_keep_the_conversation_busy(
     response = limited_client.post(CHAT_URL, json={"message": "Encore ?", "conversation_id": "conv-1"})
 
     assert response.status_code == 429
-    assert conversations.start_turn("conv-1") is True
+    assert conversations.start_turn("conv-1") is not None
 
 
 def test_erasure_during_turn_is_not_undone(
@@ -185,7 +189,7 @@ def test_erasure_during_turn_is_not_undone(
     original = fake_llm.stream_with_tools
 
     def erase_then_answer(*args: object, **kwargs: object) -> AsyncIterator[str | Message]:
-        conversations.forget_mentions(["Jean Dupont"])
+        conversations.forget_all()
         return original(*args, **kwargs)
 
     fake_llm.stream_with_tools = erase_then_answer  # type: ignore[method-assign]
@@ -195,3 +199,56 @@ def test_erasure_during_turn_is_not_undone(
     assert events[-1][0] == "done"
     response = limited_client.post(CHAT_URL, json={"message": "Encore ?", "conversation_id": "conv-1"})
     assert response.status_code == 404
+
+
+def test_new_conversation_is_busy_not_unknown_during_its_first_turn(
+    limited_client: TestClient,
+    conversations: ConversationStore,
+    fake_llm: FakeLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Un second message envoyé avec l'id reçu dans start, pendant le premier tour, reçoit 409
+    started: list[str] = []
+    original_start = conversations.start_turn
+
+    def recording_start(conversation_id: str) -> str | None:
+        started.append(conversation_id)
+        return original_start(conversation_id)
+
+    monkeypatch.setattr(conversations, "start_turn", recording_start)
+    original_stream = fake_llm.stream_with_tools
+    refusals: list[HTTPException] = []
+
+    async def second_message_meanwhile(*args: Any, **kwargs: Any) -> AsyncIterator[str | Message]:
+        body = ChatRequest(message="Encore ?", conversation_id=started[0])
+        with pytest.raises(HTTPException) as refused:
+            # Refusé avant le limiteur : la requête n'est pas nécessaire
+            await open_chat_turn(body, None, conversations)  # type: ignore[arg-type]
+        refusals.append(refused.value)
+        async for item in original_stream(*args, **kwargs):
+            yield item
+
+    fake_llm.stream_with_tools = second_message_meanwhile  # type: ignore[method-assign]
+
+    events = post_chat(limited_client, message="Bonjour")
+
+    assert events[-1][0] == "done"
+    assert [refusal.status_code for refusal in refusals] == [409]
+    # Le premier tour terminé, la conversation est enregistrée et libre
+    assert conversations.open(events[0][1]["conversation_id"])[1]
+    assert conversations.start_turn(events[0][1]["conversation_id"]) is not None
+
+
+def test_too_long_conversation_returns_409_without_llm_nor_quota(
+    limited_client: TestClient, fake_llm: FakeLLMClient, conversations: ConversationStore
+) -> None:
+    conversations.save("long", [Message(role=Role.USER, content="…")] * MAX_HISTORY_MESSAGES)
+
+    response = limited_client.post(CHAT_URL, json={"message": "Encore ?", "conversation_id": "long"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == CONVERSATION_TOO_LONG
+    assert fake_llm.tool_calls == []
+    # Le quota (1 par minute) n'a pas été consommé, et la conversation n'est pas restée occupée
+    assert limited_client.post(CHAT_URL, json={"message": "Bonjour"}).status_code == 200
+    assert conversations.start_turn("long") is not None

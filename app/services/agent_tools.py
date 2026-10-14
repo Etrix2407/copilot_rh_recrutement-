@@ -2,14 +2,16 @@
 
 Les garde-fous de sécurité vivent ici, pas dans le prompt système que le LLM peut ignorer :
 seuls les outils connus sont exécutés, leurs arguments sont validés, la recherche de
-créneaux est imposée avant la réservation, et le dossier du candidat est vérifié avant
-de prendre un créneau (le store contrôle ensuite les transitions de statut).
+créneaux est imposée avant la réservation, le dossier du candidat est vérifié avant
+de prendre un créneau (le store contrôle ensuite les transitions de statut), et chaque
+demande de l'utilisateur permet au plus une réservation et un changement de statut.
 """
 
 import logging
 import sqlite3
 import time
-from collections.abc import Sequence, Set
+from collections.abc import Mapping, Sequence, Set
+from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
@@ -24,25 +26,23 @@ from app.services.candidate_store import (
     CandidateStore,
     InvalidStatusTransitionError,
 )
-from app.tools.candidates import AmbiguousCandidateError, find_candidate, normalize_name, update_candidate_status
+from app.services.text import normalize_name, quote_for_llm
+from app.tools.candidates import STATUS_LABELS, AmbiguousCandidateError, find_candidate, update_candidate_status
 from app.tools.definitions import BOOK_INTERVIEW_TOOL, SEARCH_SLOTS_TOOL, UPDATE_STATUS_TOOL
 from app.tools.interviews import book_interview, search_interview_slots
 
 logger = logging.getLogger(__name__)
 
-# Statuts en français, pour les messages lus par le LLM puis repris dans ses réponses
-STATUS_LABELS = {
-    CandidateStatus.NEW: "nouveau",
-    CandidateStatus.ANALYZED: "CV analysé",
-    CandidateStatus.INTERVIEW_SCHEDULED: "entretien planifié",
-    CandidateStatus.ACCEPTED: "retenu",
-    CandidateStatus.REJECTED: "refusé",
-}
-
 SUCCESS = "SUCCES"
 
-# Réservations réussies autorisées par message de l'utilisateur : un LLM détourné ne peut pas vider l'agenda
+# Appels réussis autorisés par message de l'utilisateur : un LLM détourné ne peut ni vider
+# l'agenda ni changer le statut de tous les candidats en une seule demande
 MAX_BOOKINGS_PER_REQUEST = 1
+MAX_STATUS_UPDATES_PER_REQUEST = 1
+_MAX_SUCCESSES_PER_REQUEST = {
+    BOOK_INTERVIEW_TOOL: MAX_BOOKINGS_PER_REQUEST,
+    UPDATE_STATUS_TOOL: MAX_STATUS_UPDATES_PER_REQUEST,
+}
 
 # Clé ajoutée au résultat de book_interview renvoyé au LLM : elle lui dit si le dossier du
 # candidat a suivi la réservation. Visible par le LLM, elle reste en français comme les clés
@@ -91,20 +91,68 @@ _ARGUMENTS: dict[str, type[BaseModel]] = {
 }
 
 
-class _BookingRefusedError(Exception):
-    """Réservation refusée avant de prendre le créneau ; le message est destiné au LLM."""
+# Plafond par message de l'utilisateur : (appels réussis autorisés, message pour le LLM, résumé pour l'humain)
+_PER_REQUEST_LIMITS: dict[str, tuple[int, str, str]] = {
+    BOOK_INTERVIEW_TOOL: (
+        MAX_BOOKINGS_PER_REQUEST,
+        "Entretien non réservé : une seule réservation par demande.",
+        "Réservation non faite : une seule réservation par demande.",
+    ),
+    UPDATE_STATUS_TOOL: (
+        MAX_STATUS_UPDATES_PER_REQUEST,
+        "Statut non modifié : un seul changement de statut par demande de l'utilisateur.",
+        "Statut non modifié : un seul changement de statut par demande.",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ToolOutcome:
+    """Résultat d'un outil : le contenu renvoyé au LLM, et le résumé affiché à l'humain.
+
+    Le contenu s'adresse au LLM (noms d'outils, de paramètres, consignes) ; le résumé de la
+    carte d'outil est en français courant, sans nom technique.
+    """
+
+    result: ToolResult
+    summary: str
+
+    @property
+    def succeeded(self) -> bool:
+        content = self.result.content
+        return isinstance(content, list) or content.get("statut") == SUCCESS
+
+    def to_event(self) -> ToolResultEvent:
+        return ToolResultEvent(name=self.result.name, success=self.succeeded, summary=self.summary)
+
+
+class _Refusal(Exception):
+    """Appel refusé avant toute action : un message pour le LLM, un résumé pour l'humain."""
+
+    def __init__(self, message: str, summary: str) -> None:
+        super().__init__(message)
+        self.message = message
+        self.summary = summary
 
 
 def run_tool(
-    call: ToolCall, *, store: CandidateStore, searched_dates: Set[str], bookings_done: int = 0
-) -> ToolResult:
+    call: ToolCall,
+    *,
+    store: CandidateStore,
+    searched_dates: Set[str],
+    successes: Mapping[str, int] | None = None,
+) -> ToolOutcome:
     """Exécute un appel d'outil du LLM et journalise son résultat, sans donnée personnelle.
 
     searched_dates : dates dont le LLM a déjà VU le résultat de recherche (voir searched_dates_in).
-    bookings_done : réservations déjà réussies pendant ce message de l'utilisateur.
+    successes : appels déjà réussis pendant ce message de l'utilisateur, par nom d'outil
+    (voir ToolOutcome.succeeded), pour les plafonds par demande.
     """
     started = time.perf_counter()
-    content = _dispatch(call, store=store, searched_dates=searched_dates, bookings_done=bookings_done)
+    try:
+        content, summary = _dispatch(call, store=store, searched_dates=searched_dates, successes=successes or {})
+    except _Refusal as refusal:
+        content, summary = _error(refusal.message), refusal.summary
     duration_ms = (time.perf_counter() - started) * 1000
     # Ni valeurs des arguments ni messages : ils contiennent des noms et des emails (données personnelles)
     logger.info(
@@ -114,34 +162,7 @@ def run_tool(
         _outcome(content),
         duration_ms,
     )
-    return ToolResult(call_id=call.id, name=call.name, content=content)
-
-
-def is_successful_booking(result: ToolResult) -> bool:
-    """Indique si ce résultat est une réservation réussie (pour le plafond par demande)."""
-    return (
-        result.name == BOOK_INTERVIEW_TOOL
-        and isinstance(result.content, dict)
-        and result.content.get("statut") == SUCCESS
-    )
-
-
-def summarize(result: ToolResult) -> ToolResultEvent:
-    """Résumé lisible d'un résultat d'outil, pour la carte affichée dans le chat."""
-    content = result.content
-    if isinstance(content, list):
-        match len(content):
-            case 0:
-                summary = "Aucun créneau libre"
-            case 1:
-                summary = "1 créneau trouvé"
-            case count:
-                summary = f"{count} créneaux trouvés"
-        return ToolResultEvent(name=result.name, success=True, summary=summary)
-    summary = content.get("message", "")
-    if content.get(FOLLOW_UP_KEY):
-        summary = f"{summary} {content[FOLLOW_UP_KEY]}"
-    return ToolResultEvent(name=result.name, success=content.get("statut") == SUCCESS, summary=summary)
+    return ToolOutcome(result=ToolResult(call_id=call.id, name=call.name, content=content), summary=summary)
 
 
 def searched_dates_in(history: Sequence[Message]) -> set[str]:
@@ -164,16 +185,16 @@ def searched_dates_in(history: Sequence[Message]) -> set[str]:
 
 
 def _dispatch(
-    call: ToolCall, *, store: CandidateStore, searched_dates: Set[str], bookings_done: int
-) -> list[str] | dict[str, str]:
-    """Exécute l'outil demandé.
+    call: ToolCall, *, store: CandidateStore, searched_dates: Set[str], successes: Mapping[str, int]
+) -> tuple[list[str] | dict[str, str], str]:
+    """Exécute l'outil demandé ; renvoie le contenu pour le LLM et le résumé pour l'humain.
 
-    Seuls un outil inconnu et des arguments invalides deviennent une ERREUR pour le LLM :
-    une panne du stockage remonte comme toute erreur interne.
+    Un outil inconnu, des arguments invalides ou un plafond atteint lèvent _Refusal (une ERREUR
+    pour le LLM) : une panne du stockage remonte comme toute erreur interne.
     """
     schema = _ARGUMENTS.get(call.name)
     if schema is None:
-        return _error(f"Outil inconnu : {call.name!r}.")
+        raise _Refusal(f"Outil inconnu : {call.name!r}.", "Action inconnue de l'assistant.")
     # Seule la validation des arguments est protégée : une erreur pendant l'exécution n'est pas
     # la faute des arguments (une ValidationError peut aussi venir d'une ligne illisible en base)
     try:
@@ -181,50 +202,75 @@ def _dispatch(
     except ValidationError as exc:
         # Avec des alias, « loc » contient le nom vu par le LLM (ex. « heure »), pas le nom Python
         fields = ", ".join(str(error["loc"][0]) for error in exc.errors() if error["loc"])
-        return _error(f"Arguments invalides : {fields or 'format incorrect'}.")
+        raise _Refusal(
+            f"Arguments invalides : {fields or 'format incorrect'}.", "Demande incomplète ou mal formée."
+        ) from None
+    if call.name in _PER_REQUEST_LIMITS:
+        limit, message, summary = _PER_REQUEST_LIMITS[call.name]
+        if successes.get(call.name, 0) >= limit:
+            raise _Refusal(message, summary)
 
     match args:
         case _SearchArgs():
             # Copie : le LLM ne doit pas recevoir une référence vers l'agenda lui-même
-            return list(search_interview_slots(args.date))
+            slots = list(search_interview_slots(args.date))
+            return slots, _slots_summary(len(slots))
         case _BookArgs():
-            return _book(args, store=store, searched_dates=searched_dates, bookings_done=bookings_done)
+            return _book(args, store=store, searched_dates=searched_dates)
         case _StatusArgs():
-            return update_candidate_status(store, args.candidate, args.status)
+            result = update_candidate_status(store, args.candidate, args.status)
+            if result["statut"] != SUCCESS:
+                return result, "Statut non modifié."
+            return result, f"Statut du candidat : {STATUS_LABELS[args.status]}."
     raise AssertionError(f"Outil sans exécution : {call.name}")
 
 
-def _book(
-    booking: _BookArgs, *, store: CandidateStore, searched_dates: Set[str], bookings_done: int
-) -> dict[str, str]:
-    """Réserve après avoir vérifié la recherche préalable et le dossier du candidat, puis le planifie."""
-    if bookings_done >= MAX_BOOKINGS_PER_REQUEST:
-        return _error("Entretien non réservé : une seule réservation par demande.")
+def _slots_summary(count: int) -> str:
+    match count:
+        case 0:
+            return "Aucun créneau libre"
+        case 1:
+            return "1 créneau trouvé"
+        case _:
+            return f"{count} créneaux trouvés"
+
+
+def _book(booking: _BookArgs, *, store: CandidateStore, searched_dates: Set[str]) -> tuple[dict[str, str], str]:
+    """Réserve après avoir vérifié la recherche préalable et le dossier du candidat, puis le planifie.
+
+    Lève _Refusal si la réservation est refusée avant de prendre le créneau.
+    """
     if booking.date not in searched_dates:
-        return _error(
+        raise _Refusal(
             f"Vérifie d'abord les créneaux libres avec {SEARCH_SLOTS_TOOL} pour cette date, "
-            "puis réserve un créneau de la liste obtenue."
+            "puis réserve un créneau de la liste obtenue.",
+            "Réservation reportée : l'assistant vérifie d'abord les créneaux.",
         )
 
     # Le dossier est contrôlé AVANT de prendre le créneau : un candidat déjà planifié,
     # retenu ou refusé, ou un nom et un email incohérents, ne consomment pas un créneau de l'agenda
-    try:
-        candidate = _find_booked_candidate(store, booking)
-    except _BookingRefusedError as exc:
-        return _error(str(exc))
+    candidate = _find_booked_candidate(store, booking)
     if candidate is not None and CandidateStatus.INTERVIEW_SCHEDULED not in ALLOWED_TRANSITIONS[candidate.status]:
-        return _error(
-            f"Entretien non réservé : le dossier de {candidate.name} "
-            f"est au statut « {STATUS_LABELS[candidate.status]} »."
+        label = STATUS_LABELS[candidate.status]
+        raise _Refusal(
+            f"Entretien non réservé : le dossier de {quote_for_llm(candidate.name)} est au statut « {label} ».",
+            f"Réservation non faite : dossier au statut « {label} ».",
         )
 
     result = book_interview(booking.candidate_name, booking.date, booking.time, booking.email)
     if result["statut"] != SUCCESS:
-        return result
+        return result, "Créneau déjà pris ou indisponible."
     if candidate is None:
         # Cas du test officiel 3 : la réservation est valable même sans dossier enregistré
         logger.info("Réservation pour un candidat sans dossier : statut non suivi")
-        return {**result, FOLLOW_UP_KEY: "Aucun dossier candidat correspondant : statut non suivi."}
+        follow_up = "Aucun dossier candidat correspondant : statut non suivi."
+    else:
+        follow_up = _schedule(store, candidate)
+    return {**result, FOLLOW_UP_KEY: follow_up}, f"{result['message']} {follow_up}"
+
+
+def _schedule(store: CandidateStore, candidate: Candidate) -> str:
+    """Passe le dossier en « entretien planifié » après la réservation ; renvoie le suivi du dossier."""
     try:
         store.update_status(candidate.id, CandidateStatus.INTERVIEW_SCHEDULED)
     except (CandidateNotFoundError, InvalidStatusTransitionError, sqlite3.Error) as exc:
@@ -232,11 +278,8 @@ def _book(
         # indisponible : le créneau est déjà pris, la réservation reste donc valable, seul le
         # suivi du dossier échoue
         logger.warning("Réservation faite mais dossier candidat non mis à jour (%s)", type(exc).__name__)
-        return {
-            **result,
-            FOLLOW_UP_KEY: "Dossier candidat modifié, supprimé ou inaccessible : statut non mis à jour.",
-        }
-    return {**result, FOLLOW_UP_KEY: "Statut du candidat : entretien planifié."}
+        return "Dossier candidat modifié, supprimé ou inaccessible : statut non mis à jour."
+    return "Statut du candidat : entretien planifié."
 
 
 def _find_booked_candidate(store: CandidateStore, booking: _BookArgs) -> Candidate | None:
@@ -245,12 +288,13 @@ def _find_booked_candidate(store: CandidateStore, booking: _BookArgs) -> Candida
     Un email peut être partagé par plusieurs dossiers (noms différents) : parmi eux, seul
     celui dont le nom correspond est retenu.
     Renvoie None si aucun dossier ne correspond (réservation sans suivi, test officiel 3).
-    Lève _BookingRefusedError si le nom et l'email désignent des dossiers incohérents, ou si
-    plusieurs dossiers correspondent : le créneau irait peut-être au mauvais candidat.
+    Lève _Refusal si le nom et l'email désignent des dossiers incohérents, ou si plusieurs
+    dossiers correspondent : le créneau irait peut-être au mauvais candidat.
     """
-    mismatch = _BookingRefusedError(
+    mismatch = _Refusal(
         "Entretien non réservé : le nom et l'email ne correspondent pas au même dossier candidat. "
-        "Vérifie le nom et l'email du candidat."
+        "Vérifie le nom et l'email du candidat.",
+        "Réservation non faite : le nom et l'email ne correspondent pas au même dossier.",
     )
     by_email = store.find_all_by_email(booking.email)
     if by_email:
@@ -259,9 +303,10 @@ def _find_booked_candidate(store: CandidateStore, booking: _BookArgs) -> Candida
         if not same_name:
             raise mismatch
         if len(same_name) > 1:
-            raise _BookingRefusedError(
+            raise _Refusal(
                 "Entretien non réservé : plusieurs dossiers portent ce nom et cet email. "
-                "Le dossier doit être choisi par un recruteur."
+                "Le dossier doit être choisi par un recruteur.",
+                "Réservation non faite : plusieurs dossiers correspondent, un recruteur doit choisir.",
             )
         return same_name[0]
     try:
@@ -269,8 +314,9 @@ def _find_booked_candidate(store: CandidateStore, booking: _BookArgs) -> Candida
     except CandidateNotFoundError:
         return None
     except AmbiguousCandidateError:
-        raise _BookingRefusedError(
-            "Entretien non réservé : plusieurs dossiers portent ce nom. Précise l'email du candidat."
+        raise _Refusal(
+            "Entretien non réservé : plusieurs dossiers portent ce nom. Précise l'email du candidat.",
+            "Réservation non faite : plusieurs dossiers portent ce nom.",
         ) from None
     # Aucun dossier n'a l'email demandé (sinon il aurait été trouvé plus haut) : un email
     # enregistré sur le dossier trouvé par le nom est donc forcément différent

@@ -40,7 +40,7 @@ def list_cv_samples() -> list[CVSample]:
 async def delete_candidate(
     candidate_id: str, store: CandidateStoreDep, conversations: ConversationStoreDep
 ) -> Response:
-    """Supprime définitivement un candidat, son analyse et les conversations qui le mentionnent (RGPD)."""
+    """Supprime définitivement un candidat, son analyse et toutes les conversations (RGPD)."""
     try:
         erase_candidate(candidate_id, store=store, conversations=conversations)
     except CandidateNotFoundError as exc:

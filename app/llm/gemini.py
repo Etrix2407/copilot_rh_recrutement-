@@ -23,12 +23,19 @@ TRANSIENT_ERROR_RETRY = types.HttpRetryOptions(
     http_status_codes=[429, 503],
 )
 
+# Délai maximal d'un appel HTTP à Gemini (connexion, puis chaque lecture, flux compris) : sans lui,
+# un serveur muet bloquerait la requête indéfiniment. Un dépassement est relancé par le SDK comme
+# une erreur temporaire, puis devient une LLMError : au pire ≈ 3 × 30 s + 2 délais de relance.
+LLM_TIMEOUT_SECONDS = 30
+
 
 class GeminiClient:
     def __init__(self, *, api_key: str, model: str, transport: httpx.AsyncBaseTransport | None = None) -> None:
         """transport permet aux tests de simuler les réponses HTTP de Gemini sans réseau."""
         http_options = types.HttpOptions(
             retry_options=TRANSIENT_ERROR_RETRY,
+            # Le SDK attend des millisecondes
+            timeout=int(LLM_TIMEOUT_SECONDS * 1000),
             # Un transport httpx explicite empêche le SDK de basculer sur aiohttp dès qu'il est installé
             # (ChromaDB l'installe) : ses erreurs réseau échapperaient alors à la conversion en LLMError.
             async_client_args={"transport": transport or httpx.AsyncHTTPTransport()},
