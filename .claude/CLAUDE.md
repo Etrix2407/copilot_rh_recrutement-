@@ -59,7 +59,7 @@ Documents de référence :
 # Windows PowerShell
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:create_app --factory --reload    # API → http://localhost:8000/docs
+uvicorn app.main:create_app --factory --reload    # interface → http://localhost:8000/ ; API → /docs
 python -m scripts.check_llm      # vérifie l'appel réel au LLM
 pytest                           # tests rapides, sans réseau (faux LLM)
 pytest -m llm                    # tests officiels avec le vrai LLM (consomme du quota)
@@ -90,6 +90,8 @@ app/
   services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py,
                    #   structured_output.py, policy_index.py, hr_assistant.py, agent.py, agent_chat.py…)
   tools/           # outils de l'agent (interviews.py, candidates.py) et leur description pour le LLM (definitions.py)
+frontend/          # interface HTML/CSS/JS sans build ni dépendance, servie à la racine par FastAPI
+  index.html, styles.css, js/   # un module par page (cv, candidates, hr, chat) ; textContent uniquement (pas d'innerHTML)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
 tests/             # pytest ; conftest.py fournit test_settings, fake_llm, policy_index et client (sans .env ni réseau)
@@ -98,7 +100,6 @@ tests/             # pytest ; conftest.py fournit test_settings, fake_llm, polic
   fixtures/cvs/    # CVs atypiques fictifs pour les tests de robustesse (-m llm)
 ```
 
-À créer au fil des étapes : `frontend/`.
 
 ## Règles à ne jamais enfreindre
 

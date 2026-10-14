@@ -28,3 +28,22 @@ def test_cors_ignores_unknown_origin(client: TestClient) -> None:
     response = client.get("/health", headers={"Origin": "http://evil.example"})
 
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_frontend_is_served_at_root(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Copilot RH" in response.text
+
+
+def test_frontend_assets_are_served(client: TestClient) -> None:
+    response = client.get("/js/main.js")
+
+    assert response.status_code == 200
+    assert "javascript" in response.headers["content-type"]
+
+
+def test_api_docs_stay_reachable_despite_frontend(client: TestClient) -> None:
+    assert client.get("/docs").status_code == 200
+    assert client.get("/health").status_code == 200

@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TypedDict
 
 import chromadb
@@ -10,6 +11,7 @@ from chromadb.api.types import Documents, EmbeddingFunction
 from chromadb.config import Settings as ChromaSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import agent, candidates, health, interviews, rag
 from app.config import Settings, get_settings
@@ -22,6 +24,9 @@ from app.services.candidate_store import CandidateStore
 from app.services.policy_index import PolicyIndex, create_embedding_function
 
 logger = logging.getLogger(__name__)
+
+# Interface web (HTML/CSS/JS sans build), servie à la racine par l'API elle-même
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
 class AppState(TypedDict):
@@ -72,6 +77,8 @@ def create_app(
     app.include_router(rag.router)
     app.include_router(interviews.router)
     app.include_router(agent.router)
+    # Monté en dernier : les routes /api et /docs restent prioritaires
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
     return app
 
 

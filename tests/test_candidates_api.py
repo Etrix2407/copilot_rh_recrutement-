@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 from fastapi.testclient import TestClient
 
+from app.data.candidates import SAMPLE_CANDIDATE_1, SAMPLE_CANDIDATE_2
 from app.llm.base import LLMError
 from tests.fakes import FakeLLMClient
 
@@ -71,3 +72,28 @@ def test_llm_failure_returns_502(client: TestClient, fake_llm: FakeLLMClient) ->
 
     assert response.status_code == 502
     assert "quota dépassé" in response.json()["detail"]
+
+
+def test_list_returns_every_candidate(client: TestClient) -> None:
+    store = client.app_state["candidate_store"]
+    store.add(name="Jean Dupont", email="jean.dupont@email.com")
+    store.add(name="Sophie Martin", email=None)
+
+    response = client.get("/api/candidates")
+
+    assert response.status_code == 200
+    assert [candidate["name"] for candidate in response.json()] == ["Jean Dupont", "Sophie Martin"]
+
+
+def test_list_is_empty_at_startup(client: TestClient) -> None:
+    assert client.get("/api/candidates").json() == []
+
+
+def test_samples_are_the_spec_cvs_unchanged(client: TestClient) -> None:
+    response = client.get("/api/candidates/samples")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"label": "Jean Dupont", "text": SAMPLE_CANDIDATE_1},
+        {"label": "Sophie Martin", "text": SAMPLE_CANDIDATE_2},
+    ]

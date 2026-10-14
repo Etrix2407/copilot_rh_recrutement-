@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Copilot RH</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Aller au contenu</a>
+
+  <header class="site-header">
+    <h1 class="site-title">Copilot RH</h1>
+    <p class="site-subtitle">L'assistant de recrutement</p>
+    <nav aria-label="Rubriques">
+      <ul class="tabs">
+        <li><a id="tab-cv" href="#cv">📄 Analyser un CV</a></li>
+        <li><a id="tab-candidats" href="#candidats">👥 Candidats</a></li>
+        <li><a id="tab-rh" href="#rh">❓ Questions RH</a></li>
+        <li><a id="tab-entretien" href="#entretien">📅 Planifier un entretien</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <!-- 1. Analyse de CV -->
+    <section id="cv" class="panel">
+      <h2>Analyser un CV</h2>
+      <p class="hint">Déposez le CV d'un candidat (PDF ou texte) ou collez son contenu. L'analyse donne un score sur 100 par rapport à l'offre « Lead Developer Python / IA ».</p>
+
+      <form id="cv-form" class="card" novalidate>
+        <div class="field">
+          <label for="cv-file">Fichier du CV <span class="optional">(PDF ou .txt)</span></label>
+          <input id="cv-file" name="file" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+        </div>
+        <p class="separator" aria-hidden="true">ou</p>
+        <div class="field">
+          <label for="cv-text">Texte du CV</label>
+          <textarea id="cv-text" name="text" rows="8" placeholder="Collez ici le contenu du CV…"></textarea>
+        </div>
+        <div class="samples">
+          <span id="samples-label">Essayer avec un exemple :</span>
+          <div id="cv-samples" class="chips" role="group" aria-labelledby="samples-label"></div>
+        </div>
+        <button type="submit" class="button primary">Analyser ce CV</button>
+      </form>
+
+      <div id="cv-status" class="status" role="status" aria-live="polite"></div>
+      <article id="cv-result" class="card result" hidden></article>
+    </section>
+
+    <!-- 2. Tableau des candidats -->
+    <section id="candidats" class="panel" hidden>
+      <h2>Candidats</h2>
+      <p class="hint">Tous les candidats dont le CV a été analysé, avec leur score et leur avancement.</p>
+
+      <div class="toolbar">
+        <label for="candidates-sort">Trier par</label>
+        <select id="candidates-sort">
+          <option value="score-desc">Score (du meilleur au moins bon)</option>
+          <option value="score-asc">Score (du moins bon au meilleur)</option>
+          <option value="status">Statut</option>
+          <option value="name">Nom</option>
+        </select>
+        <button type="button" id="candidates-refresh" class="button">↻ Actualiser</button>
+      </div>
+
+      <div id="candidates-status" class="status" role="status" aria-live="polite"></div>
+      <div id="candidates-table" class="table-wrapper"></div>
+    </section>
+
+    <!-- 3. Assistant RH -->
+    <section id="rh" class="panel" hidden>
+      <h2>Questions RH</h2>
+      <p class="hint">Posez une question sur les règles internes (congés, télétravail, mutuelle…). La réponse s'appuie uniquement sur les politiques de l'entreprise.</p>
+
+      <form id="hr-form" class="card" novalidate>
+        <div class="field">
+          <label for="hr-question">Votre question</label>
+          <textarea id="hr-question" rows="3" maxlength="1000" placeholder="Par exemple : combien de jours de télétravail par semaine ?"></textarea>
+        </div>
+        <div class="samples">
+          <span id="hr-examples-label">Exemples :</span>
+          <div class="chips" role="group" aria-labelledby="hr-examples-label">
+            <button type="button" class="chip" data-question="Combien de jours de RTT ai-je droit et puis-je les placer sur un CET ?">Jours de RTT et CET</button>
+            <button type="button" class="chip" data-question="Quelle est la prime de naissance accordée par l'entreprise ?">Prime de naissance</button>
+          </div>
+        </div>
+        <button type="submit" class="button primary">Poser la question</button>
+      </form>
+
+      <div id="hr-status" class="status" role="status" aria-live="polite"></div>
+      <article id="hr-result" class="card result" hidden></article>
+    </section>
+
+    <!-- 4. Chat avec l'agent -->
+    <section id="entretien" class="panel" hidden>
+      <h2>Planifier un entretien</h2>
+      <p class="hint">Écrivez votre demande comme à un assistant : le nom du candidat, son email et la date souhaitée. L'assistant cherche un créneau libre et réserve l'entretien.</p>
+
+      <div class="chat card">
+        <ol id="chat-log" class="chat-log" aria-label="Conversation"></ol>
+        <p id="chat-empty" class="empty">La conversation est vide. Écrivez votre première demande ci-dessous.</p>
+        <!-- Seule la réponse terminée est lue par les lecteurs d'écran, pas chaque mot -->
+        <div id="chat-announcer" class="visually-hidden" role="status" aria-live="polite"></div>
+
+        <form id="chat-form" class="chat-form" novalidate>
+          <label for="chat-input">Votre demande</label>
+          <textarea id="chat-input" rows="3" maxlength="2000" placeholder="Par exemple : trouve-moi un créneau le 2026-10-15 pour Jean Dupont (jean.dupont@email.com)"></textarea>
+          <p class="hint small">Entrée pour envoyer, Maj + Entrée pour aller à la ligne.</p>
+          <div class="chips">
+            <button type="button" class="chip" data-message="Trouve-moi un créneau le 2026-10-15 pour réserver un entretien avec Jean Dupont (jean.dupont@email.com)">Exemple : entretien de Jean Dupont</button>
+          </div>
+          <div class="chat-actions">
+            <button type="submit" id="chat-send" class="button primary">Envoyer</button>
+            <button type="button" id="chat-stop" class="button" hidden>■ Arrêter</button>
+            <button type="button" id="chat-reset" class="button">Nouvelle conversation</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
