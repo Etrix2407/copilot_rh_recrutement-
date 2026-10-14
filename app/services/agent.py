@@ -1,4 +1,4 @@
-"""Agent de qualification : boucle de tool calling (pilier 3).
+"""Agent de qualification : boucle de tool calling (pilier 3), en streaming (pilier 4).
 
 Protection contre l'injection de prompt : les règles importantes ne reposent pas
 sur le seul prompt système, que le LLM peut ignorer. Le code n'exécute que les
@@ -10,12 +10,13 @@ import datetime
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
-from app.llm.base import LLMClient, Message, Role, ToolCall, ToolResult
+from app.llm.base import LLMClient, LLMError, Message, Role, ToolCall, ToolResult
+from app.models.agent import TokenEvent, ToolResultEvent, ToolStartEvent
 from app.models.candidate import CandidateStatus
 from app.services.candidate_store import CandidateStore
 from app.tools.candidates import update_candidate_status
@@ -93,6 +94,60 @@ class AgentReply(BaseModel):
     messages: list[Message] = Field(description="Historique de la conversation, appels d'outils compris")
 
 
+async def stream_agent(
+    user_message: str,
+    *,
+    history: Sequence[Message] = (),
+    llm: LLMClient,
+    store: CandidateStore,
+    today: datetime.date | None = None,
+) -> AsyncIterator[TokenEvent | ToolStartEvent | ToolResultEvent | AgentReply]:
+    """Traite un message et produit les événements au fil de l'eau, puis l'AgentReply en dernier.
+
+    Le texte du LLM est découpé en mots (TokenEvent) ; chaque outil produit un
+    ToolStartEvent puis un ToolResultEvent. Lève LLMError si un appel au LLM échoue.
+    """
+    system = SYSTEM_PROMPT.format(today=(today or datetime.date.today()).isoformat())
+    messages = [*history, Message(role=Role.USER, content=user_message)]
+    searched_dates = _searched_dates(history)
+
+    for _ in range(MAX_ITERATIONS):
+        reply: Message | None = None
+        # Le fournisseur peut couper un morceau au milieu d'un mot : la fin incomplète attend le suivant
+        pending = ""
+        async for item in llm.stream_with_tools(
+            messages, system=system, tools=TOOL_DEFINITIONS, temperature=AGENT_TEMPERATURE
+        ):
+            if isinstance(item, Message):
+                reply = item
+                continue
+            words = _split_words(pending + item)
+            pending = words.pop() if words and not words[-1][-1].isspace() else ""
+            for word in words:
+                yield TokenEvent(text=word)
+        if pending:
+            yield TokenEvent(text=pending)
+        if reply is None:
+            raise LLMError("Le flux du LLM s'est terminé sans message final.")
+        messages.append(reply)
+        if not reply.tool_calls:
+            yield AgentReply(answer=reply.content, messages=messages)
+            return
+
+        results = []
+        for call in reply.tool_calls:
+            yield ToolStartEvent(name=call.name, arguments=call.arguments)
+            result = _run_tool(call, store=store, searched_dates=searched_dates)
+            yield _summarize(result)
+            results.append(result)
+        messages.append(Message(role=Role.TOOL, tool_results=results))
+
+    logger.warning("Agent arrêté après %d itérations sans réponse finale", MAX_ITERATIONS)
+    for word in _split_words(ITERATION_LIMIT_ANSWER):
+        yield TokenEvent(text=word)
+    yield AgentReply(answer=ITERATION_LIMIT_ANSWER, messages=messages)
+
+
 async def run_agent(
     user_message: str,
     *,
@@ -101,26 +156,35 @@ async def run_agent(
     store: CandidateStore,
     today: datetime.date | None = None,
 ) -> AgentReply:
-    """Traite un message : appelle le LLM et exécute les outils demandés jusqu'à la réponse finale.
+    """Version sans streaming : renvoie seulement la réponse finale et l'historique."""
+    async for item in stream_agent(user_message, history=history, llm=llm, store=store, today=today):
+        if isinstance(item, AgentReply):
+            return item
+    raise AssertionError("stream_agent se termine toujours par un AgentReply")
 
-    Lève LLMError si un appel au LLM échoue.
-    """
-    system = SYSTEM_PROMPT.format(today=(today or datetime.date.today()).isoformat())
-    messages = [*history, Message(role=Role.USER, content=user_message)]
-    searched_dates = _searched_dates(history)
 
-    for _ in range(MAX_ITERATIONS):
-        reply = await llm.generate_with_tools(
-            messages, system=system, tools=TOOL_DEFINITIONS, temperature=AGENT_TEMPERATURE
-        )
-        messages.append(reply)
-        if not reply.tool_calls:
-            return AgentReply(answer=reply.content, messages=messages)
-        results = [_run_tool(call, store=store, searched_dates=searched_dates) for call in reply.tool_calls]
-        messages.append(Message(role=Role.TOOL, tool_results=results))
+def _split_words(text: str) -> list[str]:
+    """Découpe en mots, chacun avec les espaces qui le suivent : leur concaténation redonne le texte."""
+    return re.findall(r"\s*\S+\s*", text) or ([text] if text else [])
 
-    logger.warning("Agent arrêté après %d itérations sans réponse finale", MAX_ITERATIONS)
-    return AgentReply(answer=ITERATION_LIMIT_ANSWER, messages=messages)
+
+def _summarize(result: ToolResult) -> ToolResultEvent:
+    """Résumé lisible d'un résultat d'outil, pour la carte affichée dans le chat."""
+    content = result.content
+    if isinstance(content, list):
+        match len(content):
+            case 0:
+                summary = "Aucun créneau libre"
+            case 1:
+                summary = "1 créneau trouvé"
+            case count:
+                summary = f"{count} créneaux trouvés"
+        return ToolResultEvent(name=result.name, success=True, summary=summary)
+    return ToolResultEvent(
+        name=result.name,
+        success=content.get("statut") == "SUCCES",
+        summary=str(content.get("message", "")),
+    )
 
 
 def _searched_dates(history: Sequence[Message]) -> set[str]:

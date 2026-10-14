@@ -2,7 +2,7 @@
 
 import re
 import zlib
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import numpy as np
@@ -56,6 +56,8 @@ class FakeLLMClient:
         self.json_answers: list[str | LLMError] = []
         self.json_calls: list[dict[str, object]] = []
         self.tool_answers: list[Message | LLMError] = []
+        # Taille des morceaux de texte envoyés en streaming (0 : tout le texte d'un coup)
+        self.chunk_size = 0
         self.tool_calls: list[dict[str, object]] = []
 
     async def generate(self, prompt: str) -> str:
@@ -77,14 +79,15 @@ class FakeLLMClient:
             raise answer
         return answer
 
-    async def generate_with_tools(
+    async def stream_with_tools(
         self,
         messages: Sequence[Message],
         *,
         system: str,
         tools: Sequence[ToolDefinition],
         temperature: float,
-    ) -> Message:
+    ) -> AsyncIterator[str | Message]:
+        """Envoie le texte de la réponse prévue par morceaux de chunk_size caractères, puis le Message complet."""
         # Copie de l'historique : l'agent continue de le compléter après l'appel
         self.tool_calls.append(
             {"messages": list(messages), "system": system, "tools": list(tools), "temperature": temperature}
@@ -92,7 +95,10 @@ class FakeLLMClient:
         answer = self.tool_answers.pop(0)
         if isinstance(answer, LLMError):
             raise answer
-        return answer
+        size = self.chunk_size or len(answer.content) or 1
+        for start in range(0, len(answer.content), size):
+            yield answer.content[start : start + size]
+        yield answer
 
     async def aclose(self) -> None:
         pass

@@ -1,6 +1,7 @@
 """Adaptateur Gemini : seul module autorisé à importer le SDK google-genai."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import aclosing
 
 import httpx
 from google import genai
@@ -58,14 +59,14 @@ class GeminiClient:
         response = await self._generate(contents=_to_contents(messages), config=config)
         return _text_of(response, self._model)
 
-    async def generate_with_tools(
+    async def stream_with_tools(
         self,
         messages: Sequence[Message],
         *,
         system: str,
         tools: Sequence[ToolDefinition],
         temperature: float,
-    ) -> Message:
+    ) -> AsyncIterator[str | Message]:
         config = types.GenerateContentConfig(
             system_instruction=system,
             temperature=temperature,
@@ -84,8 +85,39 @@ class GeminiClient:
             # Les outils sont exécutés par notre boucle d'agent, jamais par le SDK
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        response = await self._generate(contents=_to_contents(messages), config=config)
-        return _to_message(response, self._model)
+        texts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        try:
+            stream = await self._client.aio.models.generate_content_stream(
+                model=self._model,
+                contents=_to_contents(messages),
+                config=config,
+            )
+            # aclosing : si le client se déconnecte, le flux HTTP vers Gemini est fermé aussitôt
+            async with aclosing(stream):
+                async for chunk in stream:
+                    for part in _parts_of(chunk):
+                        # Les parties « thought » sont le raisonnement interne du modèle, pas la réponse
+                        if part.text and not part.thought:
+                            texts.append(part.text)
+                            yield part.text
+                        if part.function_call:
+                            tool_calls.append(
+                                ToolCall(
+                                    id=part.function_call.id,
+                                    name=part.function_call.name or "",
+                                    arguments=part.function_call.args or {},
+                                    signature=part.thought_signature,
+                                )
+                            )
+        except errors.APIError as exc:
+            raise LLMError(f"Appel à Gemini ({self._model}) échoué : {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise LLMError(f"Gemini ({self._model}) injoignable : {exc}") from exc
+
+        if not texts and not tool_calls:
+            raise LLMError(f"Gemini ({self._model}) a renvoyé une réponse vide.")
+        yield Message(role=Role.ASSISTANT, content="".join(texts), tool_calls=tool_calls)
 
     async def _generate(
         self,
@@ -140,21 +172,6 @@ def _to_parts(message: Message) -> list[types.Part]:
     return parts
 
 
-def _to_message(response: types.GenerateContentResponse, model: str) -> Message:
+def _parts_of(response: types.GenerateContentResponse) -> list[types.Part]:
     content = response.candidates[0].content if response.candidates else None
-    parts = (content.parts if content else None) or []
-    # Les parties « thought » sont le raisonnement interne du modèle, pas la réponse
-    text = "".join(part.text for part in parts if part.text and not part.thought)
-    tool_calls = [
-        ToolCall(
-            id=part.function_call.id,
-            name=part.function_call.name or "",
-            arguments=part.function_call.args or {},
-            signature=part.thought_signature,
-        )
-        for part in parts
-        if part.function_call
-    ]
-    if not text and not tool_calls:
-        raise LLMError(f"Gemini ({model}) a renvoyé une réponse vide.")
-    return Message(role=Role.ASSISTANT, content=text, tool_calls=tool_calls)
+    return (content.parts if content else None) or []
