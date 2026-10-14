@@ -11,7 +11,7 @@ from chromadb.config import Settings as ChromaSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import candidates, health, rag
+from app.api import candidates, health, interviews, rag
 from app.config import Settings, get_settings
 from app.data.hr_policies import HR_POLICIES
 from app.llm.base import LLMClient
@@ -63,6 +63,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(candidates.router)
     app.include_router(rag.router)
+    app.include_router(interviews.router)
     return app
 
 
