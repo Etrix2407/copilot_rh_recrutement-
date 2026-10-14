@@ -82,6 +82,28 @@ def test_llm_failure_returns_502(client: TestClient, fake_llm: FakeLLMClient) ->
     assert response.json()["detail"] == LLM_UNAVAILABLE
 
 
+@pytest.mark.parametrize(
+    ("answers", "expected_status"),
+    [("valid", 200), (["{}", "{}"], 502), ([LLMError("quota")], 502)],
+)
+def test_cv_content_is_never_logged(
+    client: TestClient,
+    fake_llm: FakeLLMClient,
+    valid_analysis_json: str,
+    caplog: pytest.LogCaptureFixture,
+    answers: str | list,
+    expected_status: int,
+) -> None:
+    fake_llm.json_answers = [valid_analysis_json] if answers == "valid" else answers
+    secret = "Rue-des-Tilleuls-42-Tel-0470123456"
+
+    with caplog.at_level("DEBUG"):
+        response = client.post(PARSE_URL, data={"text": f"CV de Jean Dupont, {secret}"})
+
+    assert response.status_code == expected_status
+    assert secret not in caplog.text
+
+
 def test_list_returns_every_candidate(client: TestClient) -> None:
     store = client.app_state["candidate_store"]
     store.add(name="Jean Dupont", email="jean.dupont@email.com")
@@ -181,3 +203,14 @@ def test_delete_works_after_a_real_agent_conversation(client: TestClient) -> Non
     assert response.status_code == 204
     with pytest.raises(ConversationNotFoundError):
         client.app_state["conversation_store"].open("conv")
+
+
+def test_unknown_candidate_message_does_not_echo_the_identifier(client: TestClient) -> None:
+    sent = "<img src=x>" + "x" * 5000
+
+    deleted = client.delete(f"/api/candidates/{sent}")
+    slots = client.get("/api/interviews/slots", params={"candidate_id": sent, "date": "2026-10-15"})
+
+    for response in (deleted, slots):
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Candidat introuvable."}

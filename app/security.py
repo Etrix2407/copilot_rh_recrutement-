@@ -27,11 +27,16 @@ SECURITY_HEADERS = {
     # Pas de contenu deviné par le navigateur (un .txt ne devient jamais un script)
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
+    # Aucune page, documentation comprise, ne peut être affichée dans une iframe (clickjacking)
+    "X-Frame-Options": "DENY",
 }
-# Scripts et styles uniquement servis par l'application, et pas d'affichage dans une iframe d'un autre site.
-# /docs n'en reçoit pas : Swagger UI charge ses fichiers depuis un CDN.
-CONTENT_SECURITY_POLICY = "default-src 'self'; frame-ancestors 'none'"
-DOCS_PATHS = ("/docs", "/redoc")
+# Scripts et styles uniquement servis par l'application, pas d'affichage dans une iframe, pas de
+# changement de l'URL de base ni d'envoi de formulaire ailleurs (que default-src ne couvre pas).
+CONTENT_SECURITY_POLICY = "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+# Seules pages sans CSP : Swagger UI et ReDoc chargent leurs fichiers (versions figées) depuis un CDN.
+# Comparaison EXACTE du chemin : un test par préfixe laissait passer « /docs%2f..%2findex.html », que
+# les fichiers statiques ramènent à l'interface elle-même.
+DOCS_PATHS = frozenset({"/docs", "/redoc"})
 
 
 class SecurityMiddleware:
@@ -46,7 +51,9 @@ class SecurityMiddleware:
             return
 
         headers = Headers(scope=scope)
-        with_csp = not scope["path"].startswith(DOCS_PATHS)
+        with_csp = scope["path"] not in DOCS_PATHS
+        # Les réponses de l'API contiennent des données personnelles : jamais gardées en cache
+        no_store = scope["path"].startswith("/api/")
         body_limit = _body_limit(scope["path"])
         received = 0
 
@@ -68,6 +75,8 @@ class SecurityMiddleware:
                     response_headers.setdefault(name, value)
                 if with_csp:
                     response_headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+                if no_store:
+                    response_headers.setdefault("Cache-Control", "no-store")
             await send(message)
 
         if refusal := self._refusal(scope, headers, body_limit):

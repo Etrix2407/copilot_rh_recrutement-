@@ -26,7 +26,8 @@ ALLOWED_TRANSITIONS: dict[CandidateStatus, frozenset[CandidateStatus]] = {
 
 class CandidateNotFoundError(Exception):
     def __init__(self, candidate_id: str) -> None:
-        super().__init__(f"Aucun candidat avec l'identifiant {candidate_id!r}.")
+        # Message fixe : l'identifiant reçu n'est pas renvoyé au client (ni écho, ni réponse démesurée)
+        super().__init__("Candidat introuvable.")
         self.candidate_id = candidate_id
 
 
