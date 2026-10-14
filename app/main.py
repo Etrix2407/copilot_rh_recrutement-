@@ -19,6 +19,7 @@ from app.data.hr_policies import HR_POLICIES
 from app.llm.base import LLMClient
 from app.llm.factory import create_llm_client
 from app.logging_config import configure_logging
+from app.security import SecurityMiddleware
 from app.services.agent_chat import ConversationStore
 from app.services.candidate_store import CandidateStore
 from app.services.policy_index import PolicyIndex, create_embedding_function
@@ -72,6 +73,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(SecurityMiddleware, allowed_origins=settings.cors_origins)
     app.include_router(health.router)
     app.include_router(candidates.router)
     app.include_router(rag.router)
