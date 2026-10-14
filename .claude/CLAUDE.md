@@ -63,6 +63,7 @@ uvicorn app.main:create_app --factory --reload    # interface → http://localho
 python -m scripts.check_llm      # vérifie l'appel réel au LLM
 pytest                           # tests rapides, sans réseau (faux LLM)
 pytest -m llm                    # tests officiels avec le vrai LLM (consomme du quota)
+python -m scripts.evaluate       # rapport des critères d'évaluation pour le README (≈ 25 appels)
 ```
 
 ## Architecture
@@ -94,10 +95,12 @@ frontend/          # interface HTML/CSS/JS sans build ni dépendance, servie à 
   index.html, styles.css, js/   # un module par page (cv, candidates, hr, chat) ; textContent uniquement (pas d'innerHTML)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
+  evaluate.py      # mesure les critères d'évaluation (tableaux du README)
 tests/             # pytest ; conftest.py fournit test_settings, fake_llm, policy_index et client (sans .env ni réseau)
   fakes.py         # FakeLLMClient (réponses prévues), FakeEmbeddingFunction et build_pdf
   real_llm.py      # run_with_real_llm : appel au vrai LLM dans les tests -m llm
-  fixtures/cvs/    # CVs atypiques fictifs pour les tests de robustesse (-m llm)
+  fixtures/cvs/    # CVs atypiques fictifs pour les tests de robustesse (-m llm), dont un CV piégé (injection)
+  fixtures/rag_trap_questions.txt  # questions pièges du RAG, partagées par les tests et scripts/evaluate.py
 ```
 
 
@@ -126,4 +129,5 @@ Détail dans `docs/cahier_des_charges.md`, section 8 :
 - `RECRUITER_AGENDA` est modifié en mémoire par `book_interview` : tout test qui réserve un créneau doit remettre l'agenda à son état initial, sinon `tests/test_data.py` échoue selon l'ordre des tests.
 - Dans les tests `-m llm`, passer par `run_with_real_llm` : un client Gemini ne survit pas à la fin de son `asyncio.run` (erreur « Event loop is closed »). Dans l'API, uvicorn n'a qu'une boucle, donc un seul client suffit.
 - Le SDK Gemini bascule sur aiohttp dès qu'il est installé (ChromaDB l'installe) : `GeminiClient` lui impose un transport httpx, sinon les erreurs réseau échappent à `LLMError`.
+- Quota Gemini gratuit : 15 requêtes/minute ; un 429 dans `pytest -m llm` n'est pas un bug, relancer le test une minute plus tard.
 - Le refus RAG est rédigé par le code (`REFUSAL`), jamais par le LLM : il renvoie seulement `answered: false`. Une réponse sans source valide est aussi refusée.
