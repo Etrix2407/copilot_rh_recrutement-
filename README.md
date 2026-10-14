@@ -59,7 +59,7 @@ Le fichier `.env` contient votre clé : il est ignoré par Git, ne le committez 
    uvicorn app.main:create_app --factory --reload
    ```
 
-3. Ouvrez la documentation interactive : <http://localhost:8000/docs>
+3. Ouvrez l'interface : <http://localhost:8000/> (documentation de l'API : <http://localhost:8000/docs>)
 
 Au premier lancement, le modèle d'embedding (environ 80 Mo) est téléchargé, ce qui ralentit le démarrage.
 
