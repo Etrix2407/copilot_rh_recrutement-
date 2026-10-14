@@ -7,6 +7,7 @@ de prendre un créneau (le store contrôle ensuite les transitions de statut).
 """
 
 import logging
+import sqlite3
 import time
 from collections.abc import Sequence, Set
 from typing import Annotated, Literal
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 from app.llm.base import Message, ToolCall, ToolResult
 from app.models.agent import ToolResultEvent
 from app.models.candidate import Candidate, CandidateStatus
+from app.models.cv_analysis import EMAIL_PATTERN
 from app.services.candidate_store import (
     ALLOWED_TRANSITIONS,
     CandidateNotFoundError,
@@ -68,7 +70,7 @@ class _BookArgs(BaseModel):
     date: _Date
     # heure
     time: Annotated[str, StringConstraints(pattern=r"^\d{2}:\d{2}$")] = Field(alias="heure")
-    email: Annotated[str, StringConstraints(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=254)]
+    email: Annotated[str, StringConstraints(pattern=EMAIL_PATTERN, max_length=254)]
 
 
 class _StatusArgs(BaseModel):
@@ -147,12 +149,15 @@ def searched_dates_in(history: Sequence[Message]) -> set[str]:
 
     Seul l'historique déjà envoyé au LLM compte : une recherche faite dans la même série
     d'appels que la réservation n'ouvre pas ce droit, car le LLM n'en a pas vu le résultat
-    et ne peut pas savoir si le créneau demandé était libre. Une recherche refusée (arguments invalides) n'ouvre pas ce droit. Les résultats d'un
-    message TOOL sont dans le même ordre que les appels du message qui le précède.
+    et ne peut pas savoir si le créneau demandé était libre. Une recherche refusée (arguments invalides)
+    n'ouvre pas ce droit. Les résultats d'un message TOOL sont dans le même ordre que les appels du
+    message qui le précède.
     """
-    dates = set()
-    for calls_message, results_message in zip(history, history[1:]):
-        for call, result in zip(calls_message.tool_calls, results_message.tool_results):
+    dates: set[str] = set()
+    # Longueurs différentes voulues : chaque message est associé au suivant
+    for calls_message, results_message in zip(history, history[1:], strict=False):
+        # Un point de reprise partiel peut avoir moins de résultats que d'appels
+        for call, result in zip(calls_message.tool_calls, results_message.tool_results, strict=False):
             if call.name == SEARCH_SLOTS_TOOL and isinstance(result.content, list):
                 dates.add(str(call.arguments.get("date")))
     return dates
@@ -209,7 +214,8 @@ def _book(
         return _error(str(exc))
     if candidate is not None and CandidateStatus.INTERVIEW_SCHEDULED not in ALLOWED_TRANSITIONS[candidate.status]:
         return _error(
-            f"Entretien non réservé : le dossier de {candidate.name} est au statut « {STATUS_LABELS[candidate.status]} »."
+            f"Entretien non réservé : le dossier de {candidate.name} "
+            f"est au statut « {STATUS_LABELS[candidate.status]} »."
         )
 
     result = book_interview(booking.candidate_name, booking.date, booking.time, booking.email)
@@ -221,33 +227,43 @@ def _book(
         return {**result, FOLLOW_UP_KEY: "Aucun dossier candidat correspondant : statut non suivi."}
     try:
         store.update_status(candidate.id, CandidateStatus.INTERVIEW_SCHEDULED)
-    except (CandidateNotFoundError, InvalidStatusTransitionError) as exc:
-        # Le dossier a été supprimé ou a changé de statut depuis la vérification : le créneau
-        # est déjà pris, la réservation reste donc valable, seul le suivi du dossier échoue
+    except (CandidateNotFoundError, InvalidStatusTransitionError, sqlite3.Error) as exc:
+        # Le dossier a été supprimé, a changé de statut depuis la vérification, ou la base est
+        # indisponible : le créneau est déjà pris, la réservation reste donc valable, seul le
+        # suivi du dossier échoue
         logger.warning("Réservation faite mais dossier candidat non mis à jour (%s)", type(exc).__name__)
         return {
             **result,
-            FOLLOW_UP_KEY: "Dossier candidat modifié ou supprimé entre-temps : statut non mis à jour.",
+            FOLLOW_UP_KEY: "Dossier candidat modifié, supprimé ou inaccessible : statut non mis à jour.",
         }
     return {**result, FOLLOW_UP_KEY: "Statut du candidat : entretien planifié."}
 
 
 def _find_booked_candidate(store: CandidateStore, booking: _BookArgs) -> Candidate | None:
-    """Retrouve le dossier par email (identifiant fiable), sinon par nom s'il est unique.
+    """Retrouve le dossier par email et nom, sinon par nom s'il est unique.
 
+    Un email peut être partagé par plusieurs dossiers (noms différents) : parmi eux, seul
+    celui dont le nom correspond est retenu.
     Renvoie None si aucun dossier ne correspond (réservation sans suivi, test officiel 3).
     Lève _BookingRefusedError si le nom et l'email désignent des dossiers incohérents, ou si
-    le nom est partagé par plusieurs dossiers : le créneau irait peut-être au mauvais candidat.
+    plusieurs dossiers correspondent : le créneau irait peut-être au mauvais candidat.
     """
     mismatch = _BookingRefusedError(
         "Entretien non réservé : le nom et l'email ne correspondent pas au même dossier candidat. "
         "Vérifie le nom et l'email du candidat."
     )
-    by_email = store.find_by_email(booking.email)
-    if by_email is not None:
-        if normalize_name(by_email.name) != normalize_name(booking.candidate_name):
+    by_email = store.find_all_by_email(booking.email)
+    if by_email:
+        wanted = normalize_name(booking.candidate_name)
+        same_name = [candidate for candidate in by_email if normalize_name(candidate.name) == wanted]
+        if not same_name:
             raise mismatch
-        return by_email
+        if len(same_name) > 1:
+            raise _BookingRefusedError(
+                "Entretien non réservé : plusieurs dossiers portent ce nom et cet email. "
+                "Le dossier doit être choisi par un recruteur."
+            )
+        return same_name[0]
     try:
         by_name = find_candidate(store, booking.candidate_name)
     except CandidateNotFoundError:

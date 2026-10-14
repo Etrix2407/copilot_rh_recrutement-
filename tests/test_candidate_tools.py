@@ -1,13 +1,10 @@
+import unicodedata
+
 import pytest
 
 from app.models.candidate import Candidate, CandidateStatus
 from app.services.candidate_store import CandidateStore
-from app.tools.candidates import update_candidate_status
-
-
-@pytest.fixture
-def store() -> CandidateStore:
-    return CandidateStore()
+from app.tools.candidates import AmbiguousCandidateError, find_candidate, normalize_name, update_candidate_status
 
 
 @pytest.fixture
@@ -72,3 +69,39 @@ def test_email_resolves_homonyms(store: CandidateStore) -> None:
     assert result["statut"] == "SUCCES"
     assert store.get(jean.id).status is CandidateStatus.REJECTED
     assert store.get(other.id).status is not CandidateStatus.REJECTED
+
+
+def test_email_shared_by_several_candidates_is_ambiguous(store: CandidateStore) -> None:
+    alice = store.add(name="Alice Martin", email="contact@famille.fr")
+    bob = store.add(name="Bob Martin", email="contact@famille.fr")
+    for candidate in (alice, bob):
+        store.update_status(candidate.id, CandidateStatus.ANALYZED)
+
+    result = update_candidate_status(store, "contact@famille.fr", "rejected")
+
+    assert result["statut"] == "ERREUR"
+    assert "précisez le nom ou l'identifiant" in result["message"]
+    assert store.get(bob.id).status is CandidateStatus.ANALYZED
+
+
+def test_shared_email_does_not_block_lookup_by_id(store: CandidateStore) -> None:
+    store.add(name="Alice Martin", email="contact@famille.fr")
+    bob = store.add(name="Bob Martin", email="contact@famille.fr")
+
+    assert find_candidate(store, bob.id) == bob
+    with pytest.raises(AmbiguousCandidateError):
+        find_candidate(store, "contact@famille.fr")
+
+
+def test_normalize_name_ignores_unicode_form() -> None:
+    # Un nom extrait d'un PDF peut être en forme décomposée (NFD)
+    decomposed = unicodedata.normalize("NFD", "Hélène Faure")
+
+    assert decomposed != "Hélène Faure"
+    assert normalize_name(decomposed) == normalize_name("Hélène Faure")
+
+
+def test_decomposed_name_finds_the_candidate(store: CandidateStore) -> None:
+    helene = store.add(name="Hélène Faure", email=None)
+
+    assert find_candidate(store, unicodedata.normalize("NFD", "hélène faure")) == helene

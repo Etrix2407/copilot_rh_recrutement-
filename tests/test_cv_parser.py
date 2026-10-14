@@ -1,4 +1,5 @@
 import asyncio
+import unicodedata
 
 import pytest
 
@@ -51,10 +52,9 @@ def test_gives_up_after_two_calls(fake_llm: FakeLLMClient) -> None:
 
 
 def test_analyze_candidate_registers_an_analyzed_candidate(
-    fake_llm: FakeLLMClient, valid_analysis_json: str
+    fake_llm: FakeLLMClient, valid_analysis_json: str, store: CandidateStore
 ) -> None:
     fake_llm.json_answers = [valid_analysis_json]
-    store = CandidateStore()
 
     candidate = asyncio.run(analyze_candidate("CV de Jean", llm=fake_llm, store=store))
 
@@ -64,7 +64,7 @@ def test_analyze_candidate_registers_an_analyzed_candidate(
     assert store.get(candidate.id) == candidate
 
 
-def test_candidate_without_name_gets_a_placeholder(fake_llm: FakeLLMClient) -> None:
+def test_candidate_without_name_gets_a_placeholder(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
     fake_llm.json_answers = [
         CVAnalysis(
             candidate_name=None,
@@ -78,15 +78,14 @@ def test_candidate_without_name_gets_a_placeholder(fake_llm: FakeLLMClient) -> N
         ).model_dump_json()
     ]
 
-    candidate = asyncio.run(analyze_candidate("???", llm=fake_llm, store=CandidateStore()))
+    candidate = asyncio.run(analyze_candidate("???", llm=fake_llm, store=store))
 
     assert candidate.name == UNNAMED_CANDIDATE
 
 
 def test_reanalysis_of_a_known_email_updates_the_same_candidate(
-    fake_llm: FakeLLMClient, valid_analysis_json: str
+    fake_llm: FakeLLMClient, valid_analysis_json: str, store: CandidateStore
 ) -> None:
-    store = CandidateStore()
     fake_llm.json_answers = [valid_analysis_json, valid_analysis_json]
 
     first = asyncio.run(analyze_candidate("CV de Jean", llm=fake_llm, store=store))
@@ -109,8 +108,7 @@ def analysis_json(name: str | None, email: str | None) -> str:
     ).model_dump_json()
 
 
-def test_shared_email_with_another_name_creates_a_new_candidate(fake_llm: FakeLLMClient) -> None:
-    store = CandidateStore()
+def test_shared_email_with_another_name_creates_a_new_candidate(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
     fake_llm.json_answers = [
         analysis_json("Alice Martin", "contact@famille.fr"),
         analysis_json("Bob Martin", "contact@famille.fr"),
@@ -124,8 +122,9 @@ def test_shared_email_with_another_name_creates_a_new_candidate(fake_llm: FakeLL
 
 
 @pytest.mark.parametrize("email", [None, "Non renseigné", "   "])
-def test_missing_or_invalid_email_never_merges(fake_llm: FakeLLMClient, email: str | None) -> None:
-    store = CandidateStore()
+def test_missing_or_invalid_email_never_merges(
+    fake_llm: FakeLLMClient, store: CandidateStore, email: str | None
+) -> None:
     fake_llm.json_answers = [analysis_json("Claire Durand", email), analysis_json("Claire Durand", email)]
 
     first = asyncio.run(analyze_candidate("CV 1", llm=fake_llm, store=store))
@@ -135,9 +134,41 @@ def test_missing_or_invalid_email_never_merges(fake_llm: FakeLLMClient, email: s
     assert first.email is None
 
 
-def test_too_long_name_is_truncated_instead_of_failing(fake_llm: FakeLLMClient) -> None:
+def test_too_long_name_is_truncated_instead_of_failing(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
     fake_llm.json_answers = [analysis_json("Jean " + "x" * 300, None)]
 
-    candidate = asyncio.run(analyze_candidate("CV", llm=fake_llm, store=CandidateStore()))
+    candidate = asyncio.run(analyze_candidate("CV", llm=fake_llm, store=store))
 
     assert len(candidate.name) == 100
+
+
+def test_reanalysis_with_shared_email_updates_the_candidate_with_the_same_name(
+    fake_llm: FakeLLMClient, store: CandidateStore
+) -> None:
+    fake_llm.json_answers = [
+        analysis_json("Alice Martin", "contact@famille.fr"),
+        analysis_json("Bob Martin", "contact@famille.fr"),
+        analysis_json("Alice Martin", "contact@famille.fr"),
+    ]
+
+    alice = asyncio.run(analyze_candidate("CV d'Alice", llm=fake_llm, store=store))
+    asyncio.run(analyze_candidate("CV de Bob", llm=fake_llm, store=store))
+    alice_again = asyncio.run(analyze_candidate("CV d'Alice, version 2", llm=fake_llm, store=store))
+
+    assert alice_again.id == alice.id
+    assert len(store.list_all()) == 2
+
+
+def test_reanalysis_with_decomposed_name_updates_the_same_candidate(
+    fake_llm: FakeLLMClient, store: CandidateStore
+) -> None:
+    fake_llm.json_answers = [
+        analysis_json("Hélène Faure", "helene@email.com"),
+        analysis_json(unicodedata.normalize("NFD", "Hélène Faure"), "helene@email.com"),
+    ]
+
+    first = asyncio.run(analyze_candidate("CV 1", llm=fake_llm, store=store))
+    second = asyncio.run(analyze_candidate("CV 2", llm=fake_llm, store=store))
+
+    assert second.id == first.id
+    assert len(store.list_all()) == 1
