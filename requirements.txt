@@ -15,8 +15,3 @@ chromadb==1.5.9
 google-genai==2.30.0
 # Client HTTP utilisé par google-genai : importé dans app/llm/gemini.py pour capter les erreurs réseau
 httpx==0.28.1
-
-# Tests
-pytest==9.1.1
-# Client HTTP du TestClient de Starlette (remplace httpx, déprécié pour cet usage)
-httpx2==2.13.1

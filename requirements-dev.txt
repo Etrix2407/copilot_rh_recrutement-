@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# Tests
+# numpy : importé directement par le faux embedding (tests/fakes.py), déjà installé par chromadb
+# Plage compatible avec Python 3.11 (numpy 2.5 exige Python 3.12)
+numpy>=1.26,<3
+pytest==9.1.1
+# Client HTTP du TestClient de Starlette (remplace httpx, déprécié pour cet usage)
+httpx2==2.13.1
