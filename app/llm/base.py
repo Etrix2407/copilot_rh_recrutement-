@@ -1,6 +1,6 @@
 """Port LLM : l'interface que le reste de l'application utilise, quel que soit le fournisseur."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -92,16 +92,18 @@ class LLMClient(Protocol):
         """
         ...
 
-    async def generate_with_tools(
+    def stream_with_tools(
         self,
         messages: Sequence[Message],
         *,
         system: str,
         tools: Sequence[ToolDefinition],
         temperature: float,
-    ) -> Message:
-        """Renvoie le message de l'assistant : sa réponse texte et/ou les outils qu'il veut appeler.
+    ) -> AsyncIterator[str | Message]:
+        """Produit la réponse de l'assistant au fil de l'eau.
 
+        Produit d'abord les morceaux de texte dès qu'ils arrivent, puis, en dernier,
+        le Message complet (texte entier et/ou outils que le LLM veut appeler).
         Les outils ne sont jamais exécutés ici : c'est à l'appelant de le faire
         et de renvoyer leurs résultats dans un message de rôle TOOL.
         Lève LLMError si l'appel échoue.

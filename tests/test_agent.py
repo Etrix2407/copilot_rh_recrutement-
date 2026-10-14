@@ -6,8 +6,9 @@ import pytest
 
 from app.data.agenda import RECRUITER_AGENDA
 from app.llm.base import LLMError, Message, Role, ToolCall
+from app.models.agent import TokenEvent, ToolResultEvent, ToolStartEvent
 from app.models.candidate import CandidateStatus
-from app.services.agent import ITERATION_LIMIT_ANSWER, MAX_ITERATIONS, AgentReply, run_agent
+from app.services.agent import ITERATION_LIMIT_ANSWER, MAX_ITERATIONS, AgentReply, run_agent, stream_agent
 from app.services.candidate_store import CandidateStore
 from tests.fakes import FakeLLMClient
 
@@ -225,3 +226,81 @@ def test_tool_calls_are_logged_without_emails(
     assert len(tool_logs) == 2
     assert "book_interview" in tool_logs[1] and "ms)" in tool_logs[1]
     assert "jean.dupont@email.com" not in caplog.text
+
+
+def collect_events(fake_llm: FakeLLMClient, store: CandidateStore, message: str = "Réserve Jean Dupont") -> list[object]:
+    async def collect() -> list[object]:
+        stream = stream_agent(message, llm=fake_llm, store=store, today=datetime.date(2026, 10, 14))
+        return [item async for item in stream]
+
+    return asyncio.run(collect())
+
+
+def test_stream_emits_tool_events_then_words_then_reply(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
+    fake_llm.tool_answers = [
+        tool_call("search_interview_slots", date="2026-10-15"),
+        tool_call("book_interview", time="09:00", **JEAN),
+        final("Entretien réservé à 09:00."),
+    ]
+
+    events = collect_events(fake_llm, store)
+
+    assert [type(event) for event in events] == [
+        ToolStartEvent,
+        ToolResultEvent,
+        ToolStartEvent,
+        ToolResultEvent,
+        TokenEvent,
+        TokenEvent,
+        TokenEvent,
+        TokenEvent,
+        AgentReply,
+    ]
+    assert events[0] == ToolStartEvent(name="search_interview_slots", arguments={"date": "2026-10-15"})
+    assert events[1] == ToolResultEvent(name="search_interview_slots", success=True, summary="4 créneaux trouvés")
+    assert events[3].success is True
+    assert [event.text for event in events[4:8]] == ["Entretien ", "réservé ", "à ", "09:00."]
+    assert events[-1].answer == "Entretien réservé à 09:00."
+
+
+@pytest.mark.parametrize(
+    ("slots", "summary"),
+    [([], "Aucun créneau libre"), (["10:00"], "1 créneau trouvé")],
+)
+def test_slot_summary_wording(
+    fake_llm: FakeLLMClient, store: CandidateStore, slots: list[str], summary: str
+) -> None:
+    RECRUITER_AGENDA["2026-10-16"] = slots
+    fake_llm.tool_answers = [tool_call("search_interview_slots", date="2026-10-16"), final("Ok.")]
+
+    events = collect_events(fake_llm, store)
+
+    assert events[1].summary == summary
+
+
+def test_failed_tool_is_reported_as_failure(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
+    fake_llm.tool_answers = [tool_call("book_interview", time="09:00", **JEAN), final("Ok.")]
+
+    events = collect_events(fake_llm, store)
+
+    assert events[1].success is False
+    assert "search_interview_slots" in events[1].summary
+
+
+def test_iteration_limit_answer_is_streamed(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
+    fake_llm.tool_answers = [tool_call("search_interview_slots", date="2026-10-15")] * MAX_ITERATIONS
+
+    events = collect_events(fake_llm, store)
+
+    streamed = "".join(event.text for event in events if isinstance(event, TokenEvent))
+    assert streamed == ITERATION_LIMIT_ANSWER
+
+
+def test_words_cut_between_chunks_are_rebuilt(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
+    fake_llm.chunk_size = 3
+    fake_llm.tool_answers = [final("Réservé le 2026-10-15 pour jean.dupont@email.com.")]
+
+    events = collect_events(fake_llm, store)
+
+    tokens = [event.text for event in events if isinstance(event, TokenEvent)]
+    assert tokens == ["Réservé ", "le ", "2026-10-15 ", "pour ", "jean.dupont@email.com."]
