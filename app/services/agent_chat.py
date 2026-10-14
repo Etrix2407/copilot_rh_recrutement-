@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Sequence
 
 from app.llm.base import LLMClient, LLMError, Message
@@ -13,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 LLM_UNAVAILABLE = "L'assistant est momentanément indisponible. Réessayez dans quelques instants."
 UNEXPECTED_ERROR = "Une erreur inattendue est survenue. Réessayez ou reformulez votre demande."
+CONVERSATION_TOO_LONG = "Cette conversation est trop longue. Commencez une nouvelle conversation."
+
+# Plafonds mémoire : au-delà, les plus anciennes conversations sont oubliées
+MAX_CONVERSATIONS = 100
+# Messages d'un historique (appels et résultats d'outils compris) : tout est renvoyé au LLM à chaque tour
+MAX_HISTORY_MESSAGES = 60
 
 
 class ConversationNotFoundError(Exception):
@@ -23,8 +30,9 @@ class ConversationNotFoundError(Exception):
 class ConversationStore:
     """Historiques des conversations en mémoire : ils sont vidés à chaque redémarrage de l'API."""
 
-    def __init__(self) -> None:
-        self._conversations: dict[str, list[Message]] = {}
+    def __init__(self, max_conversations: int = MAX_CONVERSATIONS) -> None:
+        self._conversations: OrderedDict[str, list[Message]] = OrderedDict()
+        self._max_conversations = max_conversations
 
     def open(self, conversation_id: str | None) -> tuple[str, list[Message]]:
         """Renvoie l'id et l'historique de la conversation ; sans id, en démarre une nouvelle.
@@ -40,6 +48,9 @@ class ConversationStore:
 
     def save(self, conversation_id: str, messages: Sequence[Message]) -> None:
         self._conversations[conversation_id] = list(messages)
+        self._conversations.move_to_end(conversation_id)
+        while len(self._conversations) > self._max_conversations:
+            self._conversations.popitem(last=False)
 
 
 async def chat(
@@ -56,6 +67,9 @@ async def chat(
     L'historique n'est enregistré qu'une fois la réponse terminée : une réponse
     interrompue (erreur, déconnexion du client) ne laisse pas d'historique incohérent.
     """
+    if len(history) >= MAX_HISTORY_MESSAGES:
+        yield ErrorEvent(message=CONVERSATION_TOO_LONG)
+        return
     try:
         async for item in stream_agent(message, history=history, llm=llm, store=store):
             if isinstance(item, AgentReply):

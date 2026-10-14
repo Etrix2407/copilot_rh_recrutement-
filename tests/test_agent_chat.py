@@ -4,7 +4,14 @@ import pytest
 
 from app.llm.base import LLMError, Message, Role
 from app.models.agent import AgentEvent, DoneEvent, ErrorEvent
-from app.services.agent_chat import UNEXPECTED_ERROR, ConversationNotFoundError, ConversationStore, chat
+from app.services.agent_chat import (
+    CONVERSATION_TOO_LONG,
+    MAX_HISTORY_MESSAGES,
+    UNEXPECTED_ERROR,
+    ConversationNotFoundError,
+    ConversationStore,
+    chat,
+)
 from app.services.candidate_store import CandidateStore
 from tests.fakes import FakeLLMClient
 
@@ -63,3 +70,31 @@ def test_unexpected_error_becomes_error_event(fake_llm: FakeLLMClient) -> None:
     events = run_chat(fake_llm, ConversationStore(), "conv-1")
 
     assert events == [ErrorEvent(message=UNEXPECTED_ERROR)]
+
+
+def test_oldest_conversations_are_forgotten() -> None:
+    conversations = ConversationStore(max_conversations=2)
+    for conversation_id in ("a", "b", "c"):
+        conversations.save(conversation_id, [])
+
+    with pytest.raises(ConversationNotFoundError):
+        conversations.open("a")
+    assert conversations.open("c") == ("c", [])
+
+
+def test_too_long_conversation_is_refused(fake_llm: FakeLLMClient) -> None:
+    history = [Message(role=Role.USER, content="…")] * MAX_HISTORY_MESSAGES
+
+    async def collect() -> list[AgentEvent]:
+        stream = chat(
+            "Encore ?",
+            conversation_id="long",
+            history=history,
+            llm=fake_llm,
+            store=CandidateStore(),
+            conversations=ConversationStore(),
+        )
+        return [event async for event in stream]
+
+    assert asyncio.run(collect()) == [ErrorEvent(message=CONVERSATION_TOO_LONG)]
+    assert fake_llm.tool_calls == []
