@@ -88,7 +88,7 @@ app/
   data/            # données du cahier des charges, contenu identique, noms traduits
   models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py…)
   services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py,
-                   #   structured_output.py, policy_index.py, hr_assistant.py…)
+                   #   structured_output.py, policy_index.py, hr_assistant.py, agent.py…)
   tools/           # outils de l'agent (interviews.py, candidates.py) et leur description pour le LLM (definitions.py)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm

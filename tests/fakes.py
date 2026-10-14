@@ -9,7 +9,7 @@ import numpy as np
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from pydantic import BaseModel
 
-from app.llm.base import LLMError, Message
+from app.llm.base import LLMError, Message, ToolDefinition
 
 
 class FakeEmbeddingFunction(EmbeddingFunction[Documents]):
@@ -55,6 +55,8 @@ class FakeLLMClient:
     def __init__(self) -> None:
         self.json_answers: list[str | LLMError] = []
         self.json_calls: list[dict[str, object]] = []
+        self.tool_answers: list[Message | LLMError] = []
+        self.tool_calls: list[dict[str, object]] = []
 
     async def generate(self, prompt: str) -> str:
         return "ok"
@@ -71,6 +73,23 @@ class FakeLLMClient:
             {"messages": list(messages), "system": system, "schema": schema, "temperature": temperature}
         )
         answer = self.json_answers.pop(0)
+        if isinstance(answer, LLMError):
+            raise answer
+        return answer
+
+    async def generate_with_tools(
+        self,
+        messages: Sequence[Message],
+        *,
+        system: str,
+        tools: Sequence[ToolDefinition],
+        temperature: float,
+    ) -> Message:
+        # Copie de l'historique : l'agent continue de le compléter après l'appel
+        self.tool_calls.append(
+            {"messages": list(messages), "system": system, "tools": list(tools), "temperature": temperature}
+        )
+        answer = self.tool_answers.pop(0)
         if isinstance(answer, LLMError):
             raise answer
         return answer
