@@ -2,8 +2,10 @@ from collections.abc import Callable
 
 from fastapi.testclient import TestClient
 
+from app.api.errors import LLM_UNAVAILABLE
 from app.data.candidates import SAMPLE_CANDIDATE_1, SAMPLE_CANDIDATE_2
 from app.llm.base import LLMError
+from app.services.cv_reader import MAX_CV_BYTES, MAX_CV_CHARS
 from tests.fakes import FakeLLMClient
 
 PARSE_URL = "/api/candidates/parse"
@@ -71,7 +73,8 @@ def test_llm_failure_returns_502(client: TestClient, fake_llm: FakeLLMClient) ->
     response = client.post(PARSE_URL, data={"text": "CV"})
 
     assert response.status_code == 502
-    assert "quota dépassé" in response.json()["detail"]
+    # Le détail interne de l'erreur reste dans les logs
+    assert response.json()["detail"] == LLM_UNAVAILABLE
 
 
 def test_list_returns_every_candidate(client: TestClient) -> None:
@@ -97,3 +100,18 @@ def test_samples_are_the_spec_cvs_unchanged(client: TestClient) -> None:
         {"label": "Jean Dupont", "text": SAMPLE_CANDIDATE_1},
         {"label": "Sophie Martin", "text": SAMPLE_CANDIDATE_2},
     ]
+
+
+def test_too_long_text_is_rejected(client: TestClient) -> None:
+    response = client.post(PARSE_URL, data={"text": "x" * (MAX_CV_CHARS + 1)})
+
+    assert response.status_code == 422
+    assert "trop long" in response.json()["detail"]
+
+
+def test_too_large_file_is_rejected_before_reading(client: TestClient) -> None:
+    files = {"file": ("cv.txt", b"x" * (MAX_CV_BYTES + 1), "text/plain")}
+
+    response = client.post(PARSE_URL, files=files)
+
+    assert response.status_code == 413

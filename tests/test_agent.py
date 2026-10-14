@@ -210,7 +210,7 @@ def test_llm_error_is_propagated(fake_llm: FakeLLMClient, store: CandidateStore)
         run(fake_llm, store)
 
 
-def test_tool_calls_are_logged_without_emails(
+def test_tool_calls_are_logged_without_personal_data(
     fake_llm: FakeLLMClient, store: CandidateStore, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake_llm.tool_answers = [
@@ -226,6 +226,7 @@ def test_tool_calls_are_logged_without_emails(
     assert len(tool_logs) == 2
     assert "book_interview" in tool_logs[1] and "ms)" in tool_logs[1]
     assert "jean.dupont@email.com" not in caplog.text
+    assert "Jean Dupont" not in caplog.text
 
 
 def collect_events(fake_llm: FakeLLMClient, store: CandidateStore, message: str = "Réserve Jean Dupont") -> list[object]:

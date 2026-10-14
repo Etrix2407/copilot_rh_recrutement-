@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
+from app.services import cv_reader
 from app.services.cv_reader import CVReadError, read_cv_file
 
 
@@ -33,3 +34,15 @@ def test_non_utf8_text_file_is_rejected() -> None:
 def test_unsupported_format_is_rejected() -> None:
     with pytest.raises(CVReadError, match="Format non pris en charge"):
         read_cv_file("cv.docx", b"...")
+
+
+def test_pdf_with_too_many_pages_is_rejected(monkeypatch: pytest.MonkeyPatch, make_pdf: Callable[[str], bytes]) -> None:
+    monkeypatch.setattr(cv_reader, "MAX_PDF_PAGES", 0)
+
+    with pytest.raises(CVReadError, match="pages maximum"):
+        read_cv_file("cv.pdf", make_pdf("Jean Dupont"))
+
+
+def test_too_long_text_file_is_rejected() -> None:
+    with pytest.raises(CVReadError, match="trop long"):
+        read_cv_file("cv.txt", b"x" * (cv_reader.MAX_CV_CHARS + 1))

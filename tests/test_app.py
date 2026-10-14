@@ -47,3 +47,30 @@ def test_frontend_assets_are_served(client: TestClient) -> None:
 def test_api_docs_stay_reachable_despite_frontend(client: TestClient) -> None:
     assert client.get("/docs").status_code == 200
     assert client.get("/health").status_code == 200
+
+
+def test_security_headers_are_set_on_the_interface(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+
+def test_docs_keep_working_without_csp(client: TestClient) -> None:
+    response = client.get("/docs")
+
+    assert response.status_code == 200
+    assert "content-security-policy" not in response.headers
+
+
+def test_post_from_another_site_is_refused(client: TestClient) -> None:
+    response = client.post("/api/rag/ask", json={"question": "RTT ?"}, headers={"Origin": "http://evil.example"})
+
+    assert response.status_code == 403
+
+
+def test_post_from_the_interface_itself_is_allowed(client: TestClient) -> None:
+    # Même origine que le serveur : la requête atteint la route (ici refusée pour un corps invalide)
+    response = client.post("/api/rag/ask", json={}, headers={"Origin": "http://testserver"})
+
+    assert response.status_code == 422

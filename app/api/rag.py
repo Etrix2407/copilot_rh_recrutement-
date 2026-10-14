@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.dependencies import LLMClientDep, PolicyIndexDep
+from app.api.errors import llm_unavailable
 from app.llm.base import LLMError
 from app.models.hr_assistant import HRAnswer
 from app.services.hr_assistant import ask_hr_policies
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/api/rag", tags=["rag"])
 class AskRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    question: str = Field(min_length=1, description="Question sur les politiques RH")
+    question: str = Field(min_length=1, max_length=1000, description="Question sur les politiques RH")
 
 
 @router.post("/ask")
@@ -22,4 +23,4 @@ async def ask(request: AskRequest, llm: LLMClientDep, index: PolicyIndexDep) -> 
     try:
         return await ask_hr_policies(request.question, llm=llm, index=index)
     except (LLMError, InvalidLLMOutputError) as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        raise llm_unavailable(exc) from exc

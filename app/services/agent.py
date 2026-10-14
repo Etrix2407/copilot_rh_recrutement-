@@ -205,12 +205,12 @@ def _run_tool(call: ToolCall, *, store: CandidateStore, searched_dates: set[str]
         fields = ", ".join(str(error["loc"][0]) for error in exc.errors() if error["loc"])
         content = {"statut": "ERREUR", "message": f"Arguments invalides : {fields or 'format incorrect'}."}
     duration_ms = (time.perf_counter() - started) * 1000
-    # Emails masqués : ce sont des données personnelles
+    # Ni valeurs des arguments ni messages : ils contiennent des noms et des emails (données personnelles)
     logger.info(
-        "Outil %s args=%s -> %s (%.1f ms)",
+        "Outil %s (arguments : %s) -> %s (%.1f ms)",
         call.name,
-        _mask_emails(repr(call.arguments)),
-        _mask_emails(repr(content)),
+        ", ".join(sorted(call.arguments)) or "aucun",
+        _outcome(content),
         duration_ms,
     )
     return ToolResult(call_id=call.id, name=call.name, content=content)
@@ -245,12 +245,12 @@ def _schedule_candidate(store: CandidateStore, candidate_name: str) -> str:
     """Passe le candidat au statut « entretien planifié » ; la réservation reste valable en cas d'échec."""
     result = update_candidate_status(store, candidate_name, CandidateStatus.INTERVIEW_SCHEDULED)
     if result["statut"] != "SUCCES":
-        logger.warning("Statut non mis à jour après la réservation : %s", result["message"])
+        logger.warning("Statut non mis à jour après une réservation (candidat introuvable ou transition refusée)")
     return result["message"]
 
 
-_EMAIL = re.compile(r"[^@\s'\"]+@[^@\s'\"]+")
-
-
-def _mask_emails(text: str) -> str:
-    return _EMAIL.sub("<email>", text)
+def _outcome(content: Any) -> str:
+    """Résultat d'un outil résumé pour les logs, sans donnée personnelle."""
+    if isinstance(content, list):
+        return f"{len(content)} créneau(x)"
+    return str(content.get("statut", "?"))

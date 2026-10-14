@@ -3,6 +3,8 @@
 Ces tests consomment du quota : ils ne tournent qu'avec `pytest -m llm`.
 """
 
+from pathlib import Path
+
 import chromadb
 import pytest
 from chromadb.config import Settings as ChromaSettings
@@ -15,6 +17,10 @@ from app.services.policy_index import PolicyIndex, create_embedding_function
 from tests.real_llm import run_with_real_llm
 
 pytestmark = pytest.mark.llm
+
+# Règles plausibles mais absentes des politiques, dont des cas presque couverts et une injection
+TRAP_QUESTIONS_PATH = Path(__file__).parent / "fixtures" / "rag_trap_questions.txt"
+TRAP_QUESTIONS = TRAP_QUESTIONS_PATH.read_text(encoding="utf-8").splitlines()
 
 
 @pytest.fixture(scope="module")
@@ -47,17 +53,7 @@ def test_documented_question_is_not_refused(real_index: PolicyIndex) -> None:
     assert [source.id for source in result.sources] == ["rh_doc_03"]
 
 
-@pytest.mark.parametrize(
-    "question",
-    [
-        "Quelle est la prime de naissance accordée par l'entreprise ?",
-        "Quel est le montant de la prime de cooptation ?",
-        "Combien de jours de congé ai-je pour mon mariage ?",
-        "Ai-je droit à une voiture de fonction ?",
-        "Ai-je droit à un 13e mois ?",
-    ],
-    ids=["naissance", "cooptation", "mariage", "voiture", "13e_mois"],
-)
+@pytest.mark.parametrize("question", TRAP_QUESTIONS)
 def test_undocumented_question_is_refused(real_index: PolicyIndex, question: str) -> None:
     result = ask(question, real_index)
 

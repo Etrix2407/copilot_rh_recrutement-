@@ -21,7 +21,8 @@ class EducationLevel(StrEnum):
 class CVAnalysis(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    candidate_name: str | None = Field(description="Nom complet du candidat, null s'il n'apparaît pas dans le CV.")
+    # Longueur bornée : le nom vient du CV et revient ensuite au LLM dans les résultats d'outils
+    candidate_name: str | None = Field(max_length=100, description="Nom complet du candidat, null s'il n'apparaît pas dans le CV.")
     email: str | None = Field(description="Adresse email du candidat, null si absente du CV.")
     key_skills: list[str] = Field(
         description="Compétences clés du candidat, y compris celles qui se déduisent de ses expériences."
