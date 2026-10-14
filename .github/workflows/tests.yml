@@ -8,6 +8,10 @@ on:
   pull_request:
     branches: [main]
 
+# Droits minimaux : les tests lisent le code, ils n'écrivent rien dans le dépôt
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -18,6 +22,9 @@ jobs:
     steps:
       # Récupère le code du dépôt
       - uses: actions/checkout@v5
+        with:
+          # Le jeton GitHub n'est pas laissé dans .git/config, où le code testé pourrait le lire
+          persist-credentials: false
 
       # Installe Python avec un cache pip basé sur les fichiers de dépendances
       - uses: actions/setup-python@v6
@@ -47,6 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Node 22 : nécessaire pour les motifs de fichiers dans « node --test »
       - uses: actions/setup-node@v5

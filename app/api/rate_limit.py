@@ -18,7 +18,7 @@ class RateLimiter:
         self._max_requests = max_requests
         self._clock = clock
         self._requests: dict[str, deque[float]] = {}
-        # Protège contre un appel depuis un thread (route ou dépendance synchrone) en même temps que la boucle
+        # Lecture et ajout atomiques, même si un appel venait un jour d'un thread du pool (code synchrone)
         self._lock = threading.Lock()
 
     def retry_after(self, client: str) -> float:
@@ -48,6 +48,8 @@ def enforce_llm_rate_limit(request: Request) -> None:
     Une demande refusée (422, 404…) ne consomme donc pas le quota.
     """
     limiter: RateLimiter = request.state.rate_limiter
+    # Adresse réelle du client à condition de lancer uvicorn avec --no-proxy-headers : sinon, un client local
+    # peut changer d'adresse apparente à chaque requête avec un en-tête X-Forwarded-For et contourner la limite
     client = request.client.host if request.client else "inconnu"
     wait = limiter.retry_after(client)
     if wait > 0:
