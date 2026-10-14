@@ -21,9 +21,9 @@ export const EDUCATION_LABELS = {
 };
 
 export const TOOL_LABELS = {
-  search_interview_slots: "Recherche de créneaux",
-  book_interview: "Réservation de l'entretien",
-  update_candidate_status: "Mise à jour du statut",
+  rechercher_creneaux_entretien: "Recherche de créneaux",
+  reserver_entretien: "Réservation de l'entretien",
+  mettre_a_jour_statut_candidat: "Mise à jour du statut",
 };
 
 // Niveau du score : la couleur est toujours doublée d'un mot, pour ne pas dépendre de la vue des couleurs

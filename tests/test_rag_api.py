@@ -2,6 +2,8 @@ import json
 
 from fastapi.testclient import TestClient
 
+from app.api.errors import LLM_UNAVAILABLE
+
 from app.data.hr_policies import HR_POLICIES
 from app.llm.base import LLMError
 from app.services.hr_assistant import REFUSAL
@@ -42,3 +44,16 @@ def test_llm_failure_returns_502(client: TestClient, fake_llm: FakeLLMClient) ->
     response = client.post(ASK_URL, json={"question": "Combien de RTT ?"})
 
     assert response.status_code == 502
+    # Le détail interne de l'erreur reste dans les logs
+    assert response.json() == {"detail": LLM_UNAVAILABLE}
+
+
+def test_invalid_llm_answers_return_502(client: TestClient, fake_llm: FakeLLMClient) -> None:
+    # Réponse invalide puis relance invalide : InvalidLLMOutputError après 2 appels
+    fake_llm.json_answers = ["pas du JSON", "{}"]
+
+    response = client.post(ASK_URL, json={"question": "Combien de RTT ?"})
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": LLM_UNAVAILABLE}
+    assert len(fake_llm.json_calls) == 2

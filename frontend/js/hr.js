@@ -21,7 +21,11 @@ export function initHr() {
   }
 }
 
+let busy = false;
+
 async function ask() {
+  // Une seule question à la fois : un double clic n'envoie pas deux demandes
+  if (busy) return;
   const text = question.value.trim();
   if (!text) {
     showStatus(status, "Écrivez votre question avant de l'envoyer.", { kind: "error" });
@@ -30,6 +34,7 @@ async function ask() {
   }
 
   const button = form.querySelector("button[type=submit]");
+  busy = true;
   button.disabled = true;
   result.hidden = true;
   showStatus(status, "Recherche dans les politiques RH…", { kind: "loading" });
@@ -40,6 +45,7 @@ async function ask() {
   } catch (error) {
     showStatus(status, error.message, { kind: "error", onRetry: ask });
   } finally {
+    busy = false;
     button.disabled = false;
   }
 }

@@ -24,6 +24,9 @@ htmlcov/
 # Base vectorielle ChromaDB persistée localement
 chroma_db/
 
+# Base SQLite des candidats (données personnelles)
+/storage/
+
 # Frontend
 node_modules/
 

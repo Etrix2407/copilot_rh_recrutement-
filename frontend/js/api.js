@@ -1,6 +1,11 @@
 // Appels à l'API, avec des messages d'erreur compréhensibles par tous.
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status; // code HTTP, ou 0 si le serveur est injoignable
+  }
+}
 
 const NETWORK_ERROR = "Impossible de joindre le serveur. Vérifiez qu'il est bien lancé, puis réessayez.";
 
@@ -11,24 +16,20 @@ async function request(url, options) {
   } catch (error) {
     // Arrêt demandé par l'utilisateur : ce n'est pas une panne réseau
     if (options?.signal?.aborted) throw error;
-    throw new ApiError(NETWORK_ERROR);
+    throw new ApiError(NETWORK_ERROR, 0);
   }
-  if (!response.ok) throw new ApiError(await errorMessage(response));
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
   return response;
 }
 
 async function errorMessage(response) {
-  if (response.status === 502) {
-    return "Le service d'intelligence artificielle est momentanément indisponible. Réessayez dans quelques instants.";
-  }
   try {
+    // L'API renvoie toujours {"detail": "<message en français>"}
     const body = await response.json();
-    // FastAPI renvoie un texte pour nos erreurs, une liste pour les erreurs de validation
     if (typeof body.detail === "string") return body.detail;
   } catch {
-    // Corps illisible : message générique ci-dessous
+    // Corps illisible (proxy, serveur arrêté…) : message générique ci-dessous
   }
-  if (response.status === 422) return "Les informations envoyées sont incomplètes ou invalides.";
   return `Une erreur est survenue (code ${response.status}). Réessayez.`;
 }
 
@@ -43,6 +44,10 @@ export async function postJson(url, body) {
     body: JSON.stringify(body),
   });
   return response.json();
+}
+
+export async function deleteResource(url) {
+  await request(url, { method: "DELETE" });
 }
 
 export async function postForm(url, formData) {

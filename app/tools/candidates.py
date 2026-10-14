@@ -6,11 +6,11 @@ from app.services.candidate_store import CandidateNotFoundError, CandidateStore,
 
 class AmbiguousCandidateError(Exception):
     def __init__(self, name: str) -> None:
-        super().__init__(f"Plusieurs candidats s'appellent {name!r} : précisez l'identifiant.")
+        super().__init__(f"Plusieurs candidats s'appellent {name!r} : précisez l'email du candidat.")
 
 
 def update_candidate_status(store: CandidateStore, candidate: str, status: str) -> dict:
-    """Met à jour le statut d'un candidat, désigné par son identifiant ou son nom complet.
+    """Met à jour le statut d'un candidat, désigné par son identifiant, son email ou son nom complet.
 
     Renvoie un dictionnaire au même format que book_interview : le LLM reçoit
     toujours un résultat lisible, jamais une exception.
@@ -32,15 +32,26 @@ def update_candidate_status(store: CandidateStore, candidate: str, status: str) 
 
 
 def find_candidate(store: CandidateStore, candidate: str) -> Candidate:
-    """Cherche d'abord par identifiant, puis par nom (sans tenir compte de la casse)."""
+    """Cherche par identifiant, puis par email, puis par nom (sans tenir compte de la casse).
+
+    L'email départage les homonymes : sans lui, un nom partagé n'aurait aucune issue.
+    """
     try:
         return store.get(candidate)
     except CandidateNotFoundError:
         pass
-    wanted = candidate.strip().casefold()
-    matches = [c for c in store.list_all() if c.name.casefold() == wanted]
+    by_email = store.find_by_email(candidate)
+    if by_email is not None:
+        return by_email
+    wanted = normalize_name(candidate)
+    matches = [c for c in store.list_all() if normalize_name(c.name) == wanted]
     if len(matches) > 1:
         raise AmbiguousCandidateError(candidate)
     if not matches:
         raise CandidateNotFoundError(candidate)
     return matches[0]
+
+
+def normalize_name(name: str) -> str:
+    """Nom comparable : espaces multiples et casse ignorés (« jean  DUPONT » désigne bien Jean Dupont)."""
+    return " ".join(name.split()).casefold()

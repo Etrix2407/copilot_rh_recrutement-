@@ -1,10 +1,12 @@
 from collections.abc import Callable
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.errors import LLM_UNAVAILABLE
 from app.data.candidates import SAMPLE_CANDIDATE_1, SAMPLE_CANDIDATE_2
-from app.llm.base import LLMError
+from app.llm.base import LLMError, Message, Role
+from app.services.agent_chat import ConversationNotFoundError
 from app.services.cv_reader import MAX_CV_BYTES, MAX_CV_CHARS
 from tests.fakes import FakeLLMClient
 
@@ -109,9 +111,36 @@ def test_too_long_text_is_rejected(client: TestClient) -> None:
     assert "trop long" in response.json()["detail"]
 
 
-def test_too_large_file_is_rejected_before_reading(client: TestClient) -> None:
+def test_too_large_file_is_rejected_without_calling_the_llm(client: TestClient, fake_llm: FakeLLMClient) -> None:
     files = {"file": ("cv.txt", b"x" * (MAX_CV_BYTES + 1), "text/plain")}
 
     response = client.post(PARSE_URL, files=files)
 
     assert response.status_code == 413
+    assert "trop volumineux" in response.json()["detail"]
+    assert fake_llm.json_calls == []
+    assert client.app_state["candidate_store"].list_all() == []
+
+
+def test_delete_removes_candidate(client: TestClient) -> None:
+    candidate = client.app_state["candidate_store"].add(name="Jean Dupont", email=None)
+
+    response = client.delete(f"/api/candidates/{candidate.id}")
+
+    assert response.status_code == 204
+    assert client.get("/api/candidates").json() == []
+
+
+def test_delete_unknown_candidate_returns_404(client: TestClient) -> None:
+    assert client.delete("/api/candidates/inconnu").status_code == 404
+
+
+def test_delete_also_forgets_conversations_about_the_candidate(client: TestClient) -> None:
+    candidate = client.app_state["candidate_store"].add(name="Jean Dupont", email="jean.dupont@email.com")
+    conversations = client.app_state["conversation_store"]
+    conversations.save("conv", [Message(role=Role.USER, content="Planifie jean.dupont@email.com")])
+
+    client.delete(f"/api/candidates/{candidate.id}")
+
+    with pytest.raises(ConversationNotFoundError):
+        conversations.open("conv")

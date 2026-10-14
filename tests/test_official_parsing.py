@@ -40,10 +40,12 @@ def test_sophie_martin_is_a_weak_match() -> None:
 def test_atypical_cv_produces_a_valid_analysis(cv_path: Path) -> None:
     cv_text = cv_path.read_text(encoding="utf-8")
 
-    # parse_cv ne renvoie qu'une analyse validée par Pydantic : obtenir un résultat suffit
+    # parse_cv ne renvoie qu'une analyse validée par Pydantic (score borné, justifications non vides) :
+    # l'obtenir, sans InvalidLLMOutputError après 2 appels, est l'essentiel de ce test
     analysis = run_with_real_llm(lambda llm: parse_cv(llm, cv_text))
 
-    assert 0 <= analysis.match_score <= 100
+    # Contrôle que le schéma ne fait pas : l'email extrait vient du CV, il n'est pas inventé
+    assert analysis.email is None or analysis.email.lower() in cv_text.lower()
 
 
 def test_injected_instructions_do_not_change_the_score() -> None:

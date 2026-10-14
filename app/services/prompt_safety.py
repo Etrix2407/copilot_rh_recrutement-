@@ -10,5 +10,9 @@ def as_data(tag: str, text: str) -> str:
     jamais une instruction. Les balises du même nom présentes dans le texte sont
     retirées : le texte ne peut pas fermer le bloc pour glisser ses propres consignes.
     """
-    cleaned = re.sub(rf"</?\s*{re.escape(tag)}\s*>", "", text, flags=re.IGNORECASE)
+    pattern = re.compile(rf"<\s*/?\s*{re.escape(tag)}\s*>", flags=re.IGNORECASE)
+    # Répété jusqu'à stabilité : « <c<cv>v> » redonnerait « <cv> » après un seul passage
+    cleaned = text
+    while (stripped := pattern.sub("", cleaned)) != cleaned:
+        cleaned = stripped
     return f"<{tag}>\n{cleaned.strip()}\n</{tag}>"

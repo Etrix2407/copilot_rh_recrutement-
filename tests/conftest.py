@@ -25,13 +25,19 @@ def test_settings(tmp_path: Path) -> Settings:
         llm_api_key="fake-key",
         # Base vectorielle propre à chaque test
         chroma_path=str(tmp_path / "chroma"),
+        database_path=str(tmp_path / "candidates.db"),
+        # Hôte utilisé par le TestClient
+        allowed_hosts=["testserver"],
         _env_file=None,
     )
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def restore_agenda() -> Iterator[None]:
-    """Remet l'agenda du recruteur à son état initial après un test qui réserve un créneau."""
+    """Remet l'agenda du recruteur à son état initial après chaque test.
+
+    Automatique : aucun test ne dépend de l'ordre d'exécution (tests/test_data.py compare l'agenda au cahier).
+    """
     initial = copy.deepcopy(RECRUITER_AGENDA)
     yield
     # Modification en place : les outils gardent une référence vers ce même dictionnaire

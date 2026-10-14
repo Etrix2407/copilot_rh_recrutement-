@@ -1,15 +1,17 @@
+import datetime
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_llm_client
+from app.config import Settings
 from app.llm.base import LLMError, Message, Role, ToolCall
-from app.services.agent_chat import LLM_UNAVAILABLE
-from tests.fakes import FakeLLMClient
+from app.main import create_app
+from app.messages import LLM_UNAVAILABLE
+from tests.fakes import FakeEmbeddingFunction, FakeLLMClient
 
 CHAT_URL = "/api/agent/chat"
-
-pytestmark = pytest.mark.usefixtures("restore_agenda")
 
 
 def parse_sse(body: str) -> list[tuple[str, dict[str, object]]]:
@@ -33,23 +35,24 @@ def test_streams_tool_events_words_then_done(client: TestClient, fake_llm: FakeL
     fake_llm.tool_answers = [
         Message(
             role=Role.ASSISTANT,
-            tool_calls=[ToolCall(id="1", name="search_interview_slots", arguments={"date": "2026-10-15"})],
+            tool_calls=[ToolCall(id="1", name="rechercher_creneaux_entretien", arguments={"date": "2026-10-15"})],
         ),
         Message(role=Role.ASSISTANT, content="4 créneaux libres."),
     ]
 
     events = post_chat(client, message="Créneaux du 2026-10-15 ?")
 
-    assert [name for name, _ in events] == ["tool_start", "tool_result", "token", "token", "token", "done"]
-    assert events[1][1] == {
+    assert [name for name, _ in events] == ["start", "tool_start", "tool_result", "token", "token", "token", "done"]
+    assert events[2][1] == {
         "type": "tool_result",
-        "name": "search_interview_slots",
+        "name": "rechercher_creneaux_entretien",
         "success": True,
         "summary": "4 créneaux trouvés",
     }
     assert "".join(data["text"] for name, data in events if name == "token") == "4 créneaux libres."
     assert events[-1][1]["answer"] == "4 créneaux libres."
-    assert events[-1][1]["conversation_id"]
+    # Même identifiant dès le début du flux et à la fin
+    assert events[-1][1]["conversation_id"] == events[0][1]["conversation_id"]
 
 
 def test_conversation_continues_with_its_history(client: TestClient, fake_llm: FakeLLMClient) -> None:
@@ -69,7 +72,10 @@ def test_llm_failure_ends_stream_with_error(client: TestClient, fake_llm: FakeLL
 
     events = post_chat(client, message="Bonjour")
 
-    assert events == [("error", {"type": "error", "message": LLM_UNAVAILABLE})]
+    assert [name for name, _ in events] == ["start", "error"]
+    assert events[-1][1]["message"] == LLM_UNAVAILABLE
+    # L'id est connu du client même si la réponse échoue : la conversation peut être poursuivie
+    assert events[0][1]["conversation_id"]
 
 
 def test_unknown_conversation_returns_404(client: TestClient) -> None:
@@ -83,3 +89,15 @@ def test_invalid_message_returns_422(client: TestClient, message: str) -> None:
     response = client.post(CHAT_URL, json={"message": message})
 
     assert response.status_code == 422
+
+
+def test_demo_date_is_given_to_the_agent(test_settings: Settings, fake_llm: FakeLLMClient) -> None:
+    settings = test_settings.model_copy(update={"demo_date": datetime.date(2026, 10, 14)})
+    app = create_app(settings, embedding_function=FakeEmbeddingFunction())
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
+    fake_llm.tool_answers = [Message(role=Role.ASSISTANT, content="Bonjour")]
+
+    with TestClient(app) as client:
+        client.post(CHAT_URL, json={"message": "Bonjour"})
+
+    assert "Date du jour : 2026-10-14." in fake_llm.tool_calls[0]["system"]

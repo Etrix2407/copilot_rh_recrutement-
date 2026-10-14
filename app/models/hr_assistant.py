@@ -26,7 +26,7 @@ class HRAnswerDraft(BaseModel):
     Les descriptions des champs servent de consignes au LLM.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     answered: bool = Field(
         description="true uniquement si les extraits fournis contiennent explicitement la réponse, sinon false."
@@ -37,3 +37,11 @@ class HRAnswerDraft(BaseModel):
     source_ids: list[str] = Field(
         description="Identifiants (rh_doc_xx) des extraits réellement utilisés pour répondre. Liste vide si answered vaut false."
     )
+
+
+class AskRequest(BaseModel):
+    """Question posée à l'assistant RH."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    question: str = Field(min_length=1, max_length=1000, description="Question sur les politiques RH")

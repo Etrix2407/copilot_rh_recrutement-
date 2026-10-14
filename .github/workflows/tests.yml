@@ -1,0 +1,39 @@
+# Intégration continue : lance la suite de tests rapide (faux LLM, sans clé API ni réseau vers le LLM).
+# Les tests -m llm sont exclus par défaut via pyproject.toml.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    # Le projet annonce Python 3.11 et plus : les deux versions sont testées
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      # Récupère le code du dépôt
+      - uses: actions/checkout@v5
+
+      # Installe Python avec un cache pip basé sur les fichiers de dépendances
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # Installe les dépendances de l'application et des tests
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Lance la suite rapide (sans les tests -m llm)
+      - name: Lancer pytest
+        run: pytest

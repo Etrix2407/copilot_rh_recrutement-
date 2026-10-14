@@ -5,11 +5,10 @@ from collections.abc import Iterable, Mapping
 from chromadb.api import ClientAPI
 from chromadb.api.types import DefaultEmbeddingFunction, Documents, EmbeddingFunction
 
+from app.config import DEFAULT_EMBEDDING_MODEL
 from app.models.hr_assistant import PolicyExcerpt
 
 COLLECTION_NAME = "hr_policies"
-# Modèle fourni par ChromaDB, sans dépendance supplémentaire
-DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
 def create_embedding_function(model_name: str) -> EmbeddingFunction[Documents]:

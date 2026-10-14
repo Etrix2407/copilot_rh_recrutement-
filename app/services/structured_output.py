@@ -49,6 +49,8 @@ async def generate_validated(
                 exc.error_count(),
             )
             last_error = exc
+            if attempt == MAX_ATTEMPTS:
+                break
             messages += [
                 Message(role=Role.ASSISTANT, content=raw_answer),
                 Message(

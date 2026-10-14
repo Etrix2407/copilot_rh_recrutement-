@@ -1,6 +1,6 @@
 // Page « Candidats » : tableau triable par score et par statut.
 
-import { getJson } from "./api.js";
+import { deleteResource, getJson } from "./api.js";
 import { clearStatus, el, showStatus } from "./dom.js";
 import { STATUS_LABELS, STATUS_ORDER, scoreLevel } from "./labels.js";
 
@@ -57,6 +57,7 @@ function render() {
       el("td", { className: "number" }, [scoreCell]),
       el("td", {}, [el("span", { className: `badge ${candidate.status}`, text: STATUS_LABELS[candidate.status] })]),
       el("td", { text: candidate.email ?? "—" }),
+      el("td", {}, [deleteButton(candidate)]),
     ]);
   });
 
@@ -64,9 +65,38 @@ function render() {
     el("table", {}, [
       el("caption", { className: "visually-hidden", text: "Liste des candidats" }),
       el("thead", {}, [
-        el("tr", {}, ["Nom", "Score", "Statut", "Email"].map((title) => el("th", { text: title, attrs: { scope: "col" } }))),
+        el("tr", {}, ["Nom", "Score", "Statut", "Email", "Action"].map((title) => el("th", { text: title, attrs: { scope: "col" } }))),
       ]),
       el("tbody", {}, rows),
     ]),
   );
+}
+
+// Droit à l'effacement (RGPD) : suppression définitive, après confirmation
+function deleteButton(candidate) {
+  const button = el("button", {
+    className: "button",
+    text: "Supprimer",
+    attrs: { type: "button", "aria-label": `Supprimer ${candidate.name}` },
+  });
+  button.addEventListener("click", async () => {
+    if (!confirm(`Supprimer définitivement ${candidate.name} et son analyse ?`)) return;
+    button.disabled = true;
+    try {
+      await deleteResource(`/api/candidates/${encodeURIComponent(candidate.id)}`);
+      candidates = candidates.filter((other) => other.id !== candidate.id);
+      showStatus(status, `${candidate.name} a été supprimé.`);
+      render();
+    } catch (error) {
+      if (error.status === 404) {
+        // Déjà supprimé (autre onglet, redémarrage…) : la ligne disparaît aussi
+        candidates = candidates.filter((other) => other.id !== candidate.id);
+        render();
+      } else {
+        button.disabled = false;
+      }
+      showStatus(status, error.message, { kind: "error" });
+    }
+  });
+  return button;
 }

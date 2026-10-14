@@ -5,6 +5,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class StartEvent(BaseModel):
+    """Début de la réponse : l'id de la conversation, à réutiliser même si la réponse est interrompue."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: Literal["start"] = "start"
+    conversation_id: str
+
+
 class TokenEvent(BaseModel):
     """Un mot de la réponse (avec l'espace qui le suit)."""
 
@@ -54,11 +63,13 @@ class ErrorEvent(BaseModel):
     message: str
 
 
-AgentEvent = TokenEvent | ToolStartEvent | ToolResultEvent | DoneEvent | ErrorEvent
+AgentEvent = StartEvent | TokenEvent | ToolStartEvent | ToolResultEvent | DoneEvent | ErrorEvent
 
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     message: str = Field(min_length=1, max_length=2000, description="Message du recruteur")
-    conversation_id: str | None = Field(default=None, description="Absent pour démarrer une nouvelle conversation")
+    conversation_id: str | None = Field(
+        default=None, max_length=64, description="Absent pour démarrer une nouvelle conversation"
+    )

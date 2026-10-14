@@ -1,13 +1,18 @@
 import asyncio
 import base64
 import json
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import TypeVar
 
 import httpx
 import pytest
+from pydantic import BaseModel
 
 from app.llm import gemini
 from app.llm.base import LLMError, Message, Role, ToolCall, ToolDefinition, ToolResult
 from app.llm.gemini import GeminiClient
+
+ResultT = TypeVar("ResultT")
 
 GEMINI_OK_RESPONSE = {"candidates": [{"content": {"role": "model", "parts": [{"text": "ok"}]}}]}
 GEMINI_OVERLOADED_RESPONSE = {"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}}
@@ -18,6 +23,21 @@ def fast_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     # Mêmes règles de relance, sans attendre plusieurs secondes entre deux essais
     fast = gemini.TRANSIENT_ERROR_RETRY.model_copy(update={"initial_delay": 0.01, "max_delay": 0.01, "jitter": 0.0})
     monkeypatch.setattr(gemini, "TRANSIENT_ERROR_RETRY", fast)
+
+
+def run_with_client(
+    transport: httpx.AsyncBaseTransport | None, call: Callable[[GeminiClient], Awaitable[ResultT]]
+) -> ResultT:
+    """Crée un client (transport factice, ou transport httpx par défaut si None), exécute l'appel puis le ferme."""
+
+    async def run() -> ResultT:
+        client = GeminiClient(api_key="fake-key", model="test-model", transport=transport)
+        try:
+            return await call(client)
+        finally:
+            await client.aclose()
+
+    return asyncio.run(run())
 
 
 def gemini_server(statuses: list[int]) -> tuple[httpx.MockTransport, list[httpx.Request]]:
@@ -34,27 +54,24 @@ def gemini_server(statuses: list[int]) -> tuple[httpx.MockTransport, list[httpx.
 
 def test_overloaded_model_is_retried() -> None:
     transport, requests = gemini_server([503, 503, 200])
-    client = GeminiClient(api_key="fake-key", model="test-model", transport=transport)
 
-    assert asyncio.run(client.generate("Bonjour")) == "ok"
+    assert run_with_client(transport, lambda client: client.generate("Bonjour")) == "ok"
     assert len(requests) == 3
 
 
 def test_persistent_overload_becomes_llm_error() -> None:
     transport, requests = gemini_server([503, 503, 503])
-    client = GeminiClient(api_key="fake-key", model="test-model", transport=transport)
 
     with pytest.raises(LLMError, match="503"):
-        asyncio.run(client.generate("Bonjour"))
+        run_with_client(transport, lambda client: client.generate("Bonjour"))
     assert len(requests) == gemini.TRANSIENT_ERROR_RETRY.attempts
 
 
 def test_client_error_is_not_retried() -> None:
     transport, requests = gemini_server([400])
-    client = GeminiClient(api_key="fake-key", model="test-model", transport=transport)
 
     with pytest.raises(LLMError):
-        asyncio.run(client.generate("Bonjour"))
+        run_with_client(transport, lambda client: client.generate("Bonjour"))
     assert len(requests) == 1
 
 
@@ -66,10 +83,9 @@ def test_network_error_becomes_llm_error(monkeypatch: pytest.MonkeyPatch) -> Non
     # Le client est créé sans transport, comme dans l'application : si le SDK passait
     # par aiohttp, il ignorerait ce transport et le test échouerait.
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", unreachable)
-    client = GeminiClient(api_key="fake-key", model="test-model")
 
     with pytest.raises(LLMError, match="injoignable"):
-        asyncio.run(client.generate("Bonjour"))
+        run_with_client(None, lambda client: client.generate("Bonjour"))
 
 
 def streaming_server(chunks: list[dict[str, object]]) -> tuple[httpx.MockTransport, list[dict[str, object]]]:
@@ -111,13 +127,12 @@ FUNCTION_CALL_CHUNK = {
 }
 
 
-def stream_with_tools(transport: httpx.MockTransport, messages: list[Message]) -> list[str | Message]:
-    async def collect() -> list[str | Message]:
-        client = GeminiClient(api_key="fake-key", model="test-model", transport=transport)
+def stream_with_tools(transport: httpx.AsyncBaseTransport, messages: list[Message]) -> list[str | Message]:
+    async def collect(client: GeminiClient) -> list[str | Message]:
         stream = client.stream_with_tools(messages, system="Agent", tools=[SEARCH_TOOL], temperature=0.0)
         return [item async for item in stream]
 
-    return asyncio.run(collect())
+    return run_with_client(transport, collect)
 
 
 def test_text_is_streamed_then_full_message() -> None:
@@ -189,3 +204,57 @@ def test_stream_server_error_becomes_llm_error() -> None:
 
     with pytest.raises(LLMError):
         stream_with_tools(transport, [Message(role=Role.USER, content="Bonjour")])
+
+
+class Answer(BaseModel):
+    value: int
+
+
+def test_generate_json_sends_system_temperature_and_schema() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"candidates": [{"content": {"role": "model", "parts": [{"text": '{"value": 1}'}]}}]})
+
+    answer = run_with_client(
+        httpx.MockTransport(handler),
+        lambda client: client.generate_json(
+            [Message(role=Role.USER, content="Question")], system="Consignes", schema=Answer, temperature=0.0
+        ),
+    )
+
+    assert answer == '{"value": 1}'
+    [body] = bodies
+    assert body["systemInstruction"]["parts"] == [{"text": "Consignes"}]
+    assert body["contents"] == [{"role": "user", "parts": [{"text": "Question"}]}]
+    assert body["generationConfig"] == {
+        "temperature": 0.0,
+        "responseMimeType": "application/json",
+        "responseJsonSchema": Answer.model_json_schema(),
+    }
+
+
+def test_thought_parts_are_not_streamed() -> None:
+    thought_chunk = {"candidates": [{"content": {"role": "model", "parts": [{"text": "Je réfléchis…", "thought": True}]}}]}
+    transport, _ = streaming_server([thought_chunk, text_chunk("Voici les créneaux.")])
+
+    items = stream_with_tools(transport, [Message(role=Role.USER, content="Créneaux ?")])
+
+    assert items == ["Voici les créneaux.", Message(role=Role.ASSISTANT, content="Voici les créneaux.")]
+
+
+class BrokenStream(httpx.AsyncByteStream):
+    """Flux SSE coupé après un premier morceau, comme une connexion perdue en cours de réponse."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield f"data: {json.dumps(text_chunk('Bonjour, '))}\r\n\r\n".encode()
+        raise httpx.ReadError("connexion interrompue")
+
+
+def test_network_error_during_stream_becomes_llm_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=BrokenStream(), headers={"content-type": "text/event-stream"})
+
+    with pytest.raises(LLMError, match="injoignable"):
+        stream_with_tools(httpx.MockTransport(handler), [Message(role=Role.USER, content="Bonjour")])

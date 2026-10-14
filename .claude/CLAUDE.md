@@ -23,6 +23,7 @@ Documents de référence :
 - Réponds en français. Code et noms (variables, fonctions, classes, fichiers) en anglais uniquement ; commentaires, docstrings et fichiers Markdown en français.
   Les noms venant du cahier des charges sont traduits en anglais, avec le nom français d'origine en commentaire juste au-dessus (ex. `# POLITIQUES_RH` au-dessus de `HR_POLICIES`). Seul le nom change : le contenu des données reste identique.
   Cela vaut aussi pour les outils de la section 6 : `rechercher_creneaux_entretien` → `search_interview_slots`, `reserver_entretien` → `book_interview` (paramètres traduits aussi). Leurs docstrings et leurs valeurs de retour restent identiques au cahier des charges.
+  Le LLM, lui, voit les noms et paramètres du cahier (`app/tools/definitions.py` : `rechercher_creneaux_entretien`, `reserver_entretien(candidat_nom, date, heure, email)`, `mettre_a_jour_statut_candidat`).
 
 ## Stack
 
@@ -58,7 +59,7 @@ Documents de référence :
 ```bash
 # Windows PowerShell
 venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # dépendances de l'application + des tests
 uvicorn app.main:create_app --factory --reload    # interface → http://localhost:8000/ ; API → /docs
 python -m scripts.check_llm      # vérifie l'appel réel au LLM
 pytest                           # tests rapides, sans réseau (faux LLM)
@@ -84,18 +85,24 @@ app/
   main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (état de lifespan)
   config.py        # Settings (pydantic-settings) lus depuis .env
   logging_config.py
-  api/             # routes FastAPI (health.py, candidates.py, rag.py, interviews.py, agent.py…) ; dependencies.py donne un accès typé à request.state
+  api/             # routes FastAPI (health.py, candidates.py, rag.py, interviews.py, agent.py…) ; dependencies.py donne un accès typé à request.state ;
+                   #   errors.py (format d'erreur commun), rate_limit.py (appels au LLM par minute et par IP)
   llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
   data/            # données du cahier des charges, contenu identique, noms traduits
+  prompts/         # prompts système (cv_parser.txt, hr_assistant.txt, agent.txt), chargés par load_prompt
   models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py, agent.py…)
   services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py,
-                   #   structured_output.py, policy_index.py, hr_assistant.py, agent.py, agent_chat.py…)
+                   #   structured_output.py, policy_index.py, hr_assistant.py, agent.py (boucle), agent_tools.py (outils et
+                   #   garde-fous), agent_chat.py (conversations, SSE), privacy.py (effacement RGPD), prompt_safety.py…)
+  security.py      # hôtes autorisés, CSRF, taille des corps, en-têtes de sécurité (middleware ASGI pur, compatible SSE)
+  messages.py      # messages destinés à l'utilisateur partagés par routes et services (LLM_UNAVAILABLE)
   tools/           # outils de l'agent (interviews.py, candidates.py) et leur description pour le LLM (definitions.py)
 frontend/          # interface HTML/CSS/JS sans build ni dépendance, servie à la racine par FastAPI
   index.html, styles.css, js/   # un module par page (cv, candidates, hr, chat) ; textContent uniquement (pas d'innerHTML)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
   evaluate.py      # mesure les critères d'évaluation (tableaux du README)
+.github/workflows/tests.yml  # intégration continue : pytest (sans -m llm) à chaque push et PR vers main
 tests/             # pytest ; conftest.py fournit test_settings, fake_llm, policy_index et client (sans .env ni réseau)
   fakes.py         # FakeLLMClient (réponses prévues), FakeEmbeddingFunction et build_pdf
   real_llm.py      # run_with_real_llm : appel au vrai LLM dans les tests -m llm
@@ -111,7 +118,7 @@ IMPORTANT :
 - **Ne pas changer** le comportement, les docstrings ni les valeurs de retour de `search_interview_slots` et `book_interview` (seuls les noms sont traduits).
 - Refus du RAG : la réponse doit dire que **la politique interne ne précise pas ce point**.
 - Parsing : température 0.0, sortie validée par Pydantic, 2 appels maximum (1 appel + 1 relance si la réponse est invalide).
-- Agent : toujours `search_interview_slots` avant `book_interview`.
+- Agent : toujours `rechercher_creneaux_entretien` avant `reserver_entretien` (garanti par le code, dans `app/services/agent.py`).
 - Clés API uniquement dans `.env`, jamais dans le code ni dans Git.
 - Ne pas journaliser le contenu complet des CVs.
 
@@ -130,4 +137,10 @@ Détail dans `docs/cahier_des_charges.md`, section 8 :
 - Dans les tests `-m llm`, passer par `run_with_real_llm` : un client Gemini ne survit pas à la fin de son `asyncio.run` (erreur « Event loop is closed »). Dans l'API, uvicorn n'a qu'une boucle, donc un seul client suffit.
 - Le SDK Gemini bascule sur aiohttp dès qu'il est installé (ChromaDB l'installe) : `GeminiClient` lui impose un transport httpx, sinon les erreurs réseau échappent à `LLMError`.
 - Quota Gemini gratuit : 15 requêtes/minute ; un 429 dans `pytest -m llm` n'est pas un bug, relancer le test une minute plus tard.
+- Les candidats sont en SQLite (`DATABASE_PATH`, dossier `storage/` ignoré par Git) ; l'agenda et les conversations restent en mémoire.
+- L'extraction PDF tourne dans un processus `spawn` (délai maximal) : un script qui l'appelle doit être un vrai fichier avec `if __name__ == "__main__"`, pas `python -` (stdin).
+- Noms d'outils en constantes : ne jamais écrire `case SEARCH_SLOTS_TOOL:` dans un `match` (capture, pas comparaison) ; utiliser `if`/`==` ou une table.
+- Tests : `allowed_hosts=["testserver"]` dans les Settings de test (hôte du TestClient) ; l'agenda est remis à zéro automatiquement après chaque test.
+- `DEMO_DATE` (Settings.demo_date) fixe la date du jour de l'agent : les tests `-m llm` et `scripts/evaluate.py` utilisent le 2026-10-14, car l'agenda ne contient que les 15 et 16/10/2026.
+- Le chat envoie d'abord un événement `start` (id de conversation) : à ignorer pour mesurer ce que l'utilisateur voit.
 - Le refus RAG est rédigé par le code (`REFUSAL`), jamais par le LLM : il renvoie seulement `answered: false`. Une réponse sans source valide est aussi refusée.

@@ -38,7 +38,8 @@ def test_llm_receives_question_and_retrieved_excerpts(fake_llm: FakeLLMClient, i
 
     [call] = fake_llm.json_calls
     [message] = call["messages"]
-    assert RTT_QUESTION in message.content
+    # La question est délimitée comme une donnée : le prompt système s'appuie sur ces balises
+    assert f"<question>\n{RTT_QUESTION}\n</question>" in message.content
     assert message.content.count("[rh_doc_") == TOP_K
     assert call["temperature"] == 0.0
     assert call["schema"] is HRAnswerDraft
@@ -60,6 +61,16 @@ def test_answer_without_valid_source_is_refused(
     fake_llm.json_answers = [draft(answered=True, answer="Une prime de 500 €.", source_ids=source_ids)]
 
     result = asyncio.run(ask_hr_policies("Quelle est la prime de naissance ?", llm=fake_llm, index=indexed))
+
+    assert result.answer == REFUSAL
+    assert result.sources == []
+
+
+@pytest.mark.parametrize("answer", ["", "   "], ids=["empty", "blank"])
+def test_empty_answer_is_refused_even_if_answered(fake_llm: FakeLLMClient, indexed: PolicyIndex, answer: str) -> None:
+    fake_llm.json_answers = [draft(answered=True, answer=answer, source_ids=["rh_doc_02"])]
+
+    result = asyncio.run(ask_hr_policies(RTT_QUESTION, llm=fake_llm, index=indexed))
 
     assert result.answer == REFUSAL
     assert result.sources == []

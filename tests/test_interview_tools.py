@@ -12,7 +12,6 @@ def test_search_returns_empty_list_for_date_without_slots() -> None:
     assert search_interview_slots("2026-12-25") == []
 
 
-@pytest.mark.usefixtures("restore_agenda")
 def test_booking_removes_slot_from_agenda() -> None:
     result = book_interview("Jean Dupont", "2026-10-15", "09:00", "jean.dupont@email.com")
 
@@ -23,7 +22,6 @@ def test_booking_removes_slot_from_agenda() -> None:
     assert search_interview_slots("2026-10-15") == ["11:00", "14:30", "16:00"]
 
 
-@pytest.mark.usefixtures("restore_agenda")
 def test_booking_same_slot_twice_fails_the_second_time() -> None:
     book_interview("Jean Dupont", "2026-10-15", "09:00", "jean.dupont@email.com")
 
