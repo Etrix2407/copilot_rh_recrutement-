@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 def erase_candidate(candidate_id: str, *, store: CandidateStore, conversations: ConversationStore) -> None:
     """Supprime le candidat, son analyse et les conversations de l'agent qui le mentionnent.
 
-    Lève CandidateNotFoundError si l'identifiant est inconnu.
+    Une réponse de l'agent en cours sur ce candidat ne réenregistrera pas sa conversation
+    (voir ConversationStore.save). Lève CandidateNotFoundError si l'identifiant est inconnu.
     """
     candidate = store.get(candidate_id)
     store.delete(candidate_id)

@@ -11,7 +11,7 @@ from app.llm.base import LLMError
 from app.models.candidate import Candidate, CVSample
 from app.services.candidate_store import CandidateNotFoundError
 from app.services.cv_parser import analyze_candidate
-from app.services.cv_reader import MAX_CV_BYTES, CVReaderBusyError, CVReadError, extract_cv_text
+from app.services.cv_reader import MAX_CV_BYTES, CVReaderBusyError, CVReadError, check_cv_request, extract_cv_text
 from app.services.privacy import erase_candidate
 from app.services.structured_output import InvalidLLMOutputError
 
@@ -62,9 +62,13 @@ async def parse_candidate(
         raise HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE, f"Fichier trop volumineux : {MAX_CV_BYTES // 1_000_000} Mo maximum."
         )
+    try:
+        check_cv_request(filename=file.filename if file else None, has_file=file is not None, has_text=text is not None)
+    except CVReadError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     content = await file.read() if file is not None else None
     if file is not None:
-        # Un fichier est compté avant l'extraction : la lecture d'un PDF coûte cher, même sans appel au LLM
+        # Un fichier valide est compté avant l'extraction : la lecture d'un PDF coûte cher, même sans LLM
         enforce_llm_rate_limit(request)
     try:
         # L'extraction d'un PDF est synchrone et coûteuse : elle ne doit pas bloquer les autres requêtes

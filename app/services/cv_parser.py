@@ -1,5 +1,7 @@
 """Pilier 1 : analyse structurée d'un CV par le LLM, validée par Pydantic."""
 
+import unicodedata
+
 from app.data.job_offers import PYTHON_DEV_JOB_OFFER
 from app.llm.base import LLMClient
 from app.models.candidate import Candidate
@@ -8,6 +10,7 @@ from app.prompts import load_prompt
 from app.services.candidate_store import CandidateStore
 from app.services.prompt_safety import as_data
 from app.services.structured_output import generate_validated
+from app.tools.candidates import normalize_name
 
 # Température nulle : la même entrée doit donner la même analyse
 TEMPERATURE = 0.0
@@ -40,15 +43,17 @@ async def analyze_candidate(cv_text: str, *, llm: LLMClient, store: CandidateSto
     sinon, l'agent ne saurait plus quel « Jean Dupont » passer en entretien planifié.
     """
     analysis = await parse_cv(llm, cv_text)
-    name = " ".join((analysis.candidate_name or "").split())[:MAX_NAME_LENGTH] or UNNAMED_CANDIDATE
-    existing = store.find_by_email(analysis.email) if analysis.email else None
-    # Même email ET même nom : c'est le même candidat. Un email partagé par deux personnes ne fusionne rien.
-    if existing is not None and _same_name(existing.name, name):
-        return store.replace_analysis(existing.id, name=name, analysis=analysis)
+    # Forme Unicode unique (NFC) : un nom extrait d'un PDF en NFD s'affiche et se compare comme les autres
+    name = unicodedata.normalize("NFC", " ".join((analysis.candidate_name or "").split()))[:MAX_NAME_LENGTH]
+    name = name or UNNAMED_CANDIDATE
+    # Même email ET même nom : c'est le même candidat (le dossier le plus récent s'il y en a plusieurs).
+    # Un email partagé par deux personnes ne fusionne rien.
+    same_candidate = [
+        candidate
+        for candidate in store.find_all_by_email(analysis.email or "")
+        if normalize_name(candidate.name) == normalize_name(name)
+    ]
+    if same_candidate:
+        return store.replace_analysis(same_candidate[-1].id, name=name, analysis=analysis)
     candidate = store.add(name=name, email=analysis.email)
     return store.record_analysis(candidate.id, analysis)
-
-
-def _same_name(first: str, second: str) -> bool:
-    """Compare deux noms sans tenir compte de la casse ni des espaces multiples."""
-    return " ".join(first.split()).casefold() == " ".join(second.split()).casefold()

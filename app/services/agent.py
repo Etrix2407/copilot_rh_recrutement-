@@ -7,6 +7,7 @@ prendre un créneau) sont appliqués par app/services/agent_tools.py, et le stor
 contrôle les transitions de statut.
 """
 
+import contextlib
 import datetime
 import logging
 import re
@@ -68,7 +69,7 @@ async def stream_agent(
     """Traite un message et produit les événements au fil de l'eau, puis l'AgentReply en dernier.
 
     Le texte du LLM est découpé en mots (TokenEvent) ; chaque outil produit un
-    ToolStartEvent, un ToolResultEvent puis un AgentCheckpoint.
+    ToolStartEvent, un AgentCheckpoint puis un ToolResultEvent.
     Lève LLMError si un appel au LLM échoue.
     """
     system = SYSTEM_PROMPT.format(today=(today or datetime.date.today()).isoformat())
@@ -78,14 +79,17 @@ async def stream_agent(
     for _ in range(MAX_ITERATIONS):
         reply: Message | None = None
         words = _WordBuffer()
-        async for item in llm.stream_with_tools(
-            messages, system=system, tools=TOOL_DEFINITIONS, temperature=AGENT_TEMPERATURE
-        ):
-            if isinstance(item, Message):
-                reply = item
-                continue
-            for word in words.feed(item):
-                yield TokenEvent(text=word)
+        # aclosing : si le client se déconnecte, le flux du LLM est fermé tout de suite,
+        # pas au passage du ramasse-miettes
+        async with contextlib.aclosing(
+            llm.stream_with_tools(messages, system=system, tools=TOOL_DEFINITIONS, temperature=AGENT_TEMPERATURE)
+        ) as stream:
+            async for item in stream:
+                if isinstance(item, Message):
+                    reply = item
+                    continue
+                for word in words.feed(item):
+                    yield TokenEvent(text=word)
         for word in words.flush():
             yield TokenEvent(text=word)
         if reply is None:
@@ -108,11 +112,12 @@ async def stream_agent(
             yield ToolStartEvent(name=call.name, arguments=call.arguments)
             result = run_tool(call, store=store, searched_dates=searched_dates, bookings_done=bookings_done)
             bookings_done += is_successful_booking(result)
-            yield summarize(result)
             results.append(result)
-            # Point de reprise après CHAQUE outil : une réservation déjà faite reste dans
-            # l'historique même si la suite de la série échoue ou si le client se déconnecte
+            # Point de reprise après CHAQUE outil, AVANT d'afficher son résultat : une réservation
+            # déjà faite reste dans l'historique même si la suite de la série échoue ou si le
+            # client se déconnecte juste après avoir reçu le résultat
             yield AgentCheckpoint(messages=_with_results(messages, reply, results))
+            yield summarize(result)
         messages = _with_results(messages, reply, results)
 
     logger.warning("Agent arrêté après %d itérations sans réponse finale", MAX_ITERATIONS)

@@ -65,6 +65,8 @@ python -m scripts.check_llm      # vérifie l'appel réel au LLM
 pytest                           # tests rapides, sans réseau (faux LLM)
 pytest -m llm                    # tests officiels avec le vrai LLM (consomme du quota)
 python -m scripts.evaluate       # rapport des critères d'évaluation pour le README (≈ 25 appels)
+node --test "tests/frontend/*.test.mjs"   # tests de l'interface (faux DOM, sans dépendance)
+ruff check .                     # lint (règles dans pyproject.toml), aussi lancé par la CI
 ```
 
 ## Architecture

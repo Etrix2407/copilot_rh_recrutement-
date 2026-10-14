@@ -3,12 +3,15 @@ from collections.abc import Callable
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_llm_client
 from app.api.errors import LLM_UNAVAILABLE
+from app.config import Settings
 from app.data.candidates import SAMPLE_CANDIDATE_1, SAMPLE_CANDIDATE_2
-from app.llm.base import LLMError, Message, Role
+from app.llm.base import LLMError, Message, Role, ToolCall
+from app.main import create_app
 from app.services.agent_chat import ConversationNotFoundError
 from app.services.cv_reader import MAX_CV_BYTES, MAX_CV_CHARS
-from tests.fakes import FakeLLMClient
+from tests.fakes import FakeEmbeddingFunction, FakeLLMClient
 
 PARSE_URL = "/api/candidates/parse"
 
@@ -144,3 +147,37 @@ def test_delete_also_forgets_conversations_about_the_candidate(client: TestClien
 
     with pytest.raises(ConversationNotFoundError):
         conversations.open("conv")
+
+
+def test_rejected_upload_does_not_consume_the_quota(test_settings: Settings, fake_llm: FakeLLMClient) -> None:
+    settings = test_settings.model_copy(update={"llm_requests_per_minute": 1})
+    app = create_app(settings, embedding_function=FakeEmbeddingFunction())
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
+    fake_llm.json_answers = [LLMError("quota")]
+
+    with TestClient(app) as limited:
+        for _ in range(3):
+            response = limited.post(PARSE_URL, files={"file": ("cv.docx", b"Jean", "application/octet-stream")})
+            assert response.status_code == 422
+        both = limited.post(PARSE_URL, files={"file": ("cv.txt", b"Jean", "text/plain")}, data={"text": "Jean"})
+        assert both.status_code == 422
+        # Le quota d'une requête est intact : la demande valide atteint le LLM (ici en échec simulé, 502)
+        assert limited.post(PARSE_URL, data={"text": "CV de Jean"}).status_code == 502
+
+
+def test_delete_works_after_a_real_agent_conversation(client: TestClient) -> None:
+    # Gemini joint aux appels d'outils une « thought signature » binaire, absente du faux LLM
+    candidate = client.app_state["candidate_store"].add(name="Jean Dupont", email="jean.dupont@email.com")
+    call = ToolCall(
+        id="1",
+        name="reserver_entretien",
+        arguments={"candidat_nom": "Jean Dupont", "email": "jean.dupont@email.com"},
+        signature=b"\xff\xfe\x00binaire",
+    )
+    client.app_state["conversation_store"].save("conv", [Message(role=Role.ASSISTANT, tool_calls=[call])])
+
+    response = client.delete(f"/api/candidates/{candidate.id}")
+
+    assert response.status_code == 204
+    with pytest.raises(ConversationNotFoundError):
+        client.app_state["conversation_store"].open("conv")

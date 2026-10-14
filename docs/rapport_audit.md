@@ -1,12 +1,12 @@
-# Rapport d'audit externe
+# Rapport d'audit
 
-Audit mené le 14/10/2026 par trois auditeurs indépendants, sans connaissance du travail de développement, avec pour consigne de « tout casser » :
+Audit mené le 14/10/2026 par des **agents IA lancés pour l'occasion**, indépendants du développement (sans accès à son historique), avec pour consigne de « tout casser ». Ce n'est pas un audit humain ni un audit tiers certifié :
 
 1. **Pentest** : attaques réelles contre un serveur lancé en local (CSRF, limite de débit, envois de fichiers, injection de prompt avec le vrai LLM, SSE, XSS, fichiers statiques, injection SQL, fuites).
 2. **Tests destructifs de la logique** : scénarios malveillants ou absurdes joués avec un faux LLM (agent, stockage, parsing, RAG, interface).
 3. **Conformité et qualité** : comparaison exigence par exigence avec le cahier des charges et le plan de développement, revue du code, des tests et de la documentation.
 
-Chaque constat ci-dessous a été reproduit puis corrigé ; les corrections sont couvertes par des tests automatisés, sauf mention contraire. Une contre-expertise a ensuite vérifié les corrections par l'attaque (voir la dernière partie).
+Chaque constat ci-dessous a été reproduit puis corrigé. Les corrections du serveur sont couvertes par des tests automatisés (pytest), celles de l'interface par des tests JavaScript (`node --test "tests/frontend/*.test.mjs"`). Exceptions : la limite mémoire de l'extraction PDF a été vérifiée à la main avec une vraie « bombe » de décompression (arrêt en 0,5 s), pas par un test automatisé. Des contre-expertises ont ensuite vérifié les corrections par l'attaque (voir les dernières parties).
 
 ## Ce qui a résisté aux attaques
 
@@ -52,7 +52,7 @@ Chaque constat ci-dessous a été reproduit puis corrigé ; les corrections sont
 
 ## Contre-expertise
 
-Trois nouveaux auditeurs indépendants ont ensuite attaqué la version corrigée.
+De nouveaux agents auditeurs ont ensuite attaqué la version corrigée.
 
 **Corrections confirmées par l'attaque** : hôtes autorisés (y compris `[::1]`, casse, port), CSRF (`Origin: null`, `Sec-Fetch-Site`), bombe de complexité arrêtée à 10 s sans processus orphelin et sans ralentir le reste de l'API, garde-fous de l'agent, effacement RGPD réel (les octets disparaissent du fichier SQLite), logs sans données personnelles, aucune faille XSS.
 
@@ -72,6 +72,22 @@ Trois nouveaux auditeurs indépendants ont ensuite attaqué la version corrigée
 | Limiteur de débit appelé depuis un thread et depuis la boucle en même temps (erreur 500 possible). | Dépendances asynchrones et verrou dans le limiteur. |
 | Tests `-m llm` dépendants de la date réelle (le 15/10/2026 allait devenir une date passée). | Date de démo configurable (`DEMO_DATE`), fixée au 14/10/2026 dans les tests et l'évaluation. |
 | Incompatibilité avec Python 3.11 (version de numpy) non détectée. | Plage de versions compatible et intégration continue sur Python 3.11 et 3.12. |
+
+## Audit final
+
+Quatre derniers agents auditeurs ont repris la version fusionnée sur `main` : pentest du serveur, tests destructifs de la logique, conformité notée par un « jury » (16/20 avant ces corrections) et vérification fonctionnelle avec le vrai Gemini (34 tests `-m llm` réussis, parcours de démo rejoué sur un vrai serveur).
+
+| Constat | Correction |
+| --- | --- |
+| **Gel du chat** : une erreur du LLM sur une file d'affichage vide figeait l'onglet (bouton Envoyer bloqué). | File d'affichage relancée au tour suivant ; tests JavaScript (`node:test`, faux DOM) qui reproduisent le cas. |
+| **Suppression en erreur 500 après un vrai chat** : la recherche RGPD sérialisait la « thought signature » binaire de Gemini. | Recherche limitée au texte, aux arguments et aux résultats des outils ; test avec une signature binaire. |
+| « Arrêter » affichait une réservation réussie comme interrompue, ou tronquait une réponse déjà reçue. | Tout ce qui a été reçu est affiché ; un outil sans résultat est signalé « résultat non reçu ». |
+| Point de reprise émis après le résultat d'outil ; panne SQLite après une réservation non rattrapée ; premier tour interrompu non enregistré (conversation « expirée »). | Point de reprise avant le résultat, panne du suivi rattrapée, conversation toujours enregistrée ; fermeture explicite des flux (`aclosing`). |
+| Effacement RGPD annulé par une réponse en cours ; deux onglets sur la même conversation. | Conversations mentionnant une personne effacée pendant le tour non réenregistrées ; un seul tour à la fois (409). |
+| Email partagé, noms Unicode décomposés, effacement par simple sous-chaîne (« Li » effaçait « libres »). | Désignation par email ambiguë refusée, noms normalisés (NFC), recherche par mots entiers. |
+| Nettoyage `as_data` quadratique (1,3 s sur un CV piégé) et balises à attributs non neutralisées. | Chevrons neutralisés en un seul passage linéaire (2 ms). |
+| Envoi de fichier invalide comptant dans la limite de débit. | Format et « fichier ou texte » vérifiés avant le comptage. |
+| Qualité : code dupliqué, route avec logique, tests sans comparaison au cahier, pas de lint. | Factorisation, service `interviews`, docstrings et comportement des outils comparés au code du cahier, `ruff` en intégration continue. |
 
 ## Limites assumées
 

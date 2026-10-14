@@ -3,7 +3,6 @@ import json
 from fastapi.testclient import TestClient
 
 from app.api.errors import LLM_UNAVAILABLE
-
 from app.data.hr_policies import HR_POLICIES
 from app.llm.base import LLMError
 from app.services.hr_assistant import REFUSAL

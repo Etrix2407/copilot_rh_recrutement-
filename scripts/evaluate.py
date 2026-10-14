@@ -115,7 +115,7 @@ async def evaluate_latency(llm: LLMClient) -> list[str]:
     return [
         "| Mesure | Délai |",
         "|---|---|",
-        f"| Premier retour affiché (carte d'outil) | {first_event:.1f} s |",
+        f"| Premier retour (carte d'outil) | {first_event:.1f} s |" if first_event else "| Premier retour | — |",
         f"| Premier mot de la réponse | {first_word:.1f} s |" if first_word else "| Premier mot | — |",
         f"| Réponse complète | {total:.1f} s |",
     ]

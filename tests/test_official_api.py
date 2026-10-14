@@ -5,7 +5,6 @@ Ces tests consomment du quota : ils ne tournent qu'avec `pytest -m llm`.
 """
 
 import datetime
-import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,11 +17,11 @@ from app.data.agenda import RECRUITER_AGENDA
 from app.data.candidates import SAMPLE_CANDIDATE_1, SAMPLE_CANDIDATE_2
 from app.main import create_app
 from app.services.hr_assistant import REFUSAL
+from tests.fakes import INITIAL_SLOTS_2026_10_15, parse_sse
 
 pytestmark = pytest.mark.llm
 
 OFFICIAL_DATE = "2026-10-15"
-INITIAL_SLOTS = ["09:00", "11:00", "14:30", "16:00"]
 
 
 @pytest.fixture(scope="module")
@@ -57,15 +56,6 @@ def jean_dupont(api: TestClient) -> dict[str, object]:
     return analyze(api, SAMPLE_CANDIDATE_1)
 
 
-def sse_events(body: str) -> list[tuple[str, dict[str, object]]]:
-    events = []
-    for block in body.strip().split("\n\n"):
-        fields = dict(line.split(": ", 1) for line in block.splitlines() if not line.startswith(":"))
-        if fields:
-            events.append((fields["event"], json.loads(fields["data"])))
-    return events
-
-
 def test_official_1_parsing_through_the_api(api: TestClient, jean_dupont: dict[str, object]) -> None:
     sophie_martin = analyze(api, SAMPLE_CANDIDATE_2)
 
@@ -78,10 +68,16 @@ def test_official_1_parsing_through_the_api(api: TestClient, jean_dupont: dict[s
 
 
 def test_official_2_rag_through_the_api(api: TestClient) -> None:
-    answered = api.post(
+    answered_response = api.post(
         "/api/rag/ask", json={"question": "Combien de jours de RTT ai-je droit et puis-je les placer sur un CET ?"}
-    ).json()
-    refused = api.post("/api/rag/ask", json={"question": "Quelle est la prime de naissance accordée par l'entreprise ?"})
+    )
+    birth_bonus = "Quelle est la prime de naissance accordée par l'entreprise ?"
+    refused = api.post("/api/rag/ask", json={"question": birth_bonus})
+
+    # Code vérifié d'abord : un 502 (quota du LLM dépassé) doit se lire comme tel, pas comme un KeyError
+    assert answered_response.status_code == 200, answered_response.text
+    assert refused.status_code == 200, refused.text
+    answered = answered_response.json()
 
     assert "rh_doc_02" in [source["id"] for source in answered["sources"]]
     # Les deux chiffres de la politique : 10 RTT par an, dont 5 plaçables sur le CET
@@ -91,7 +87,7 @@ def test_official_2_rag_through_the_api(api: TestClient) -> None:
 
 
 def test_official_3_agent_through_the_sse_chat(api: TestClient, jean_dupont: dict[str, object]) -> None:
-    assert RECRUITER_AGENDA[OFFICIAL_DATE] == INITIAL_SLOTS
+    assert RECRUITER_AGENDA[OFFICIAL_DATE] == INITIAL_SLOTS_2026_10_15
     message = (
         f"Trouve-moi un créneau le {OFFICIAL_DATE} pour réserver un entretien avec Jean Dupont (jean.dupont@email.com)"
     )
@@ -99,7 +95,7 @@ def test_official_3_agent_through_the_sse_chat(api: TestClient, jean_dupont: dic
     response = api.post("/api/agent/chat", json={"message": message})
 
     assert response.headers["content-type"].startswith("text/event-stream")
-    events = sse_events(response.text)
+    events = parse_sse(response.text)
     tools = [data["name"] for name, data in events if name == "tool_start"]
     assert "rechercher_creneaux_entretien" in tools
     assert "reserver_entretien" in tools

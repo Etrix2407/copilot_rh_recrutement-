@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 
 import pytest
 
@@ -10,11 +11,6 @@ from app.services.candidate_store import CandidateNotFoundError, CandidateStore,
 
 JEAN = {"candidat_nom": "Jean Dupont", "date": "2026-10-15", "heure": "09:00", "email": "jean.dupont@email.com"}
 SEARCHED = {"2026-10-15"}
-
-
-@pytest.fixture
-def store() -> CandidateStore:
-    return CandidateStore()
 
 
 def run(store: CandidateStore, name: str, **arguments: object) -> object:
@@ -135,8 +131,9 @@ def test_unknown_candidate_can_still_be_booked(store: CandidateStore) -> None:
     [
         CandidateNotFoundError("id"),
         InvalidStatusTransitionError(CandidateStatus.REJECTED, CandidateStatus.INTERVIEW_SCHEDULED),
+        sqlite3.OperationalError("database is locked"),
     ],
-    ids=["dossier_supprime", "statut_change"],
+    ids=["dossier_supprime", "statut_change", "base_indisponible"],
 )
 def test_booking_stays_valid_when_candidate_changes_meanwhile(
     store: CandidateStore, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, error: Exception
@@ -156,3 +153,40 @@ def test_booking_stays_valid_when_candidate_changes_meanwhile(
     assert "09:00" not in RECRUITER_AGENDA["2026-10-15"]
     assert [record.levelno for record in caplog.records] == [logging.WARNING]
     assert "Jean Dupont" not in caplog.text and "jean.dupont@email.com" not in caplog.text
+
+
+# --- Email partagé par plusieurs dossiers (noms différents) ---
+
+
+def test_shared_email_books_the_candidate_with_the_matching_name(store: CandidateStore) -> None:
+    jean = analyzed(store, "Jean Dupont", "jean.dupont@email.com")
+    sister = analyzed(store, "Marie Dupont", "jean.dupont@email.com")
+
+    result = book(store)
+
+    assert result["statut"] == "SUCCES"
+    assert store.get(jean).status is CandidateStatus.INTERVIEW_SCHEDULED
+    assert store.get(sister).status is CandidateStatus.ANALYZED
+
+
+def test_shared_email_without_matching_name_is_refused(store: CandidateStore) -> None:
+    analyzed(store, "Marie Dupont", "jean.dupont@email.com")
+    analyzed(store, "Paul Dupont", "jean.dupont@email.com")
+
+    result = book(store)
+
+    assert result["statut"] == "ERREUR"
+    assert "nom et l'email" in result["message"]
+    assert "09:00" in RECRUITER_AGENDA["2026-10-15"]
+
+
+def test_same_name_and_email_on_several_files_is_refused(store: CandidateStore) -> None:
+    first = analyzed(store, "Jean Dupont", "jean.dupont@email.com")
+    analyzed(store, "Jean Dupont", "jean.dupont@email.com")
+
+    result = book(store)
+
+    assert result["statut"] == "ERREUR"
+    assert "plusieurs dossiers" in result["message"]
+    assert "09:00" in RECRUITER_AGENDA["2026-10-15"]
+    assert store.get(first).status is CandidateStatus.ANALYZED

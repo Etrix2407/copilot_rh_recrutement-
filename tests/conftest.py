@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from app.api.dependencies import get_llm_client
 from app.config import Settings
 from app.data.agenda import RECRUITER_AGENDA
 from app.main import create_app
+from app.services.candidate_store import CandidateStore
 from app.services.policy_index import PolicyIndex
 from tests.fakes import FakeEmbeddingFunction, FakeLLMClient, build_pdf
 
@@ -45,6 +47,31 @@ def restore_agenda() -> Iterator[None]:
     RECRUITER_AGENDA.update(initial)
 
 
+SPEC_PATH = Path(__file__).parent.parent / "docs" / "cahier_des_charges.md"
+
+
+@pytest.fixture(scope="session")
+def spec_namespace() -> dict[str, object]:
+    """Exécute les blocs Python du cahier des charges et renvoie les noms qu'ils définissent.
+
+    Partagé par toute la session : un test qui appelle reserver_entretien doit remplacer
+    AGENDA_RECRUTEUR par une copie (monkeypatch.setitem) pour ne pas modifier l'agenda du cahier.
+    """
+    spec = SPEC_PATH.read_text(encoding="utf-8")
+    namespace: dict[str, object] = {}
+    for block in re.findall(r"```python\n(.*?)```", spec, flags=re.DOTALL):
+        exec(block, namespace)
+    return namespace
+
+
+@pytest.fixture
+def store() -> Iterator[CandidateStore]:
+    """Base de candidats en mémoire, fermée à la fin du test."""
+    candidate_store = CandidateStore()
+    yield candidate_store
+    candidate_store.close()
+
+
 @pytest.fixture
 def fake_llm() -> FakeLLMClient:
     return FakeLLMClient()
@@ -53,7 +80,8 @@ def fake_llm() -> FakeLLMClient:
 @pytest.fixture
 def policy_index(tmp_path: Path) -> PolicyIndex:
     """Index vide, isolé et sans modèle d'embedding à télécharger."""
-    chroma = chromadb.PersistentClient(path=str(tmp_path / "index"), settings=ChromaSettings(anonymized_telemetry=False))
+    settings = ChromaSettings(anonymized_telemetry=False)
+    chroma = chromadb.PersistentClient(path=str(tmp_path / "index"), settings=settings)
     return PolicyIndex(chroma, FakeEmbeddingFunction())
 
 

@@ -2,10 +2,11 @@ import pytest
 
 from app.data.agenda import RECRUITER_AGENDA
 from app.tools.interviews import book_interview, search_interview_slots
+from tests.fakes import INITIAL_SLOTS_2026_10_15
 
 
 def test_search_returns_free_slots_of_known_date() -> None:
-    assert search_interview_slots("2026-10-15") == ["09:00", "11:00", "14:30", "16:00"]
+    assert search_interview_slots("2026-10-15") == INITIAL_SLOTS_2026_10_15
 
 
 def test_search_returns_empty_list_for_date_without_slots() -> None:
@@ -17,7 +18,9 @@ def test_booking_removes_slot_from_agenda() -> None:
 
     assert result == {
         "statut": "SUCCES",
-        "message": "Entretien confirmé pour Jean Dupont le 2026-10-15 à 09:00. Invitation envoyée à jean.dupont@email.com.",
+        "message": (
+            "Entretien confirmé pour Jean Dupont le 2026-10-15 à 09:00. Invitation envoyée à jean.dupont@email.com."
+        ),
     }
     assert search_interview_slots("2026-10-15") == ["11:00", "14:30", "16:00"]
 

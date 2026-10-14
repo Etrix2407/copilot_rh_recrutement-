@@ -18,7 +18,7 @@ from app.services.agent import (
     stream_agent,
 )
 from app.services.candidate_store import CandidateStore
-from tests.fakes import FakeLLMClient
+from tests.fakes import INITIAL_SLOTS_2026_10_15, FakeLLMClient
 
 JEAN = {"candidat_nom": "Jean Dupont", "date": "2026-10-15", "email": "jean.dupont@email.com"}
 
@@ -39,11 +39,6 @@ def tool_results(reply: AgentReply) -> list[object]:
     return [result.content for message in reply.messages for result in message.tool_results]
 
 
-@pytest.fixture
-def store() -> CandidateStore:
-    return CandidateStore()
-
-
 def test_searches_then_books_then_answers(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
     fake_llm.tool_answers = [
         tool_call("rechercher_creneaux_entretien", date="2026-10-15"),
@@ -55,7 +50,7 @@ def test_searches_then_books_then_answers(fake_llm: FakeLLMClient, store: Candid
 
     assert reply.answer == "Entretien réservé le 2026-10-15 à 09:00."
     results = tool_results(reply)
-    assert results[0] == ["09:00", "11:00", "14:30", "16:00"]
+    assert results[0] == INITIAL_SLOTS_2026_10_15
     assert results[1]["statut"] == "SUCCES"
     assert RECRUITER_AGENDA["2026-10-15"] == ["11:00", "14:30", "16:00"]
 
@@ -177,7 +172,7 @@ def test_invalid_arguments_are_refused(
     reply = run(fake_llm, store)
 
     assert tool_results(reply)[1]["statut"] == "ERREUR"
-    assert RECRUITER_AGENDA["2026-10-15"] == ["09:00", "11:00", "14:30", "16:00"]
+    assert RECRUITER_AGENDA["2026-10-15"] == INITIAL_SLOTS_2026_10_15
 
 
 def test_unknown_tool_is_refused(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
@@ -235,7 +230,9 @@ def test_tool_calls_are_logged_without_personal_data(
     assert "Jean Dupont" not in caplog.text
 
 
-def collect_events(fake_llm: FakeLLMClient, store: CandidateStore, message: str = "Réserve Jean Dupont") -> list[object]:
+def collect_events(
+    fake_llm: FakeLLMClient, store: CandidateStore, message: str = "Réserve Jean Dupont"
+) -> list[object]:
     async def collect() -> list[object]:
         stream = stream_agent(message, llm=fake_llm, store=store, today=datetime.date(2026, 10, 14))
         return [item async for item in stream]
@@ -254,11 +251,11 @@ def test_stream_emits_tool_events_then_words_then_reply(fake_llm: FakeLLMClient,
 
     assert [type(event) for event in events] == [
         ToolStartEvent,
-        ToolResultEvent,
         AgentCheckpoint,
+        ToolResultEvent,
         ToolStartEvent,
-        ToolResultEvent,
         AgentCheckpoint,
+        ToolResultEvent,
         TokenEvent,
         TokenEvent,
         TokenEvent,
@@ -266,8 +263,10 @@ def test_stream_emits_tool_events_then_words_then_reply(fake_llm: FakeLLMClient,
         AgentReply,
     ]
     assert events[0] == ToolStartEvent(name="rechercher_creneaux_entretien", arguments={"date": "2026-10-15"})
-    assert events[1] == ToolResultEvent(name="rechercher_creneaux_entretien", success=True, summary="4 créneaux trouvés")
-    assert events[4].success is True
+    assert events[2] == ToolResultEvent(
+        name="rechercher_creneaux_entretien", success=True, summary="4 créneaux trouvés"
+    )
+    assert events[5].success is True
     assert [event.text for event in events[6:10]] == ["Entretien ", "réservé ", "à ", "09:00."]
     assert events[-1].answer == "Entretien réservé à 09:00."
 
@@ -284,7 +283,7 @@ def test_slot_summary_wording(
 
     events = collect_events(fake_llm, store)
 
-    assert events[1].summary == summary
+    assert events[2].summary == summary
 
 
 def test_failed_tool_is_reported_as_failure(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
@@ -292,8 +291,8 @@ def test_failed_tool_is_reported_as_failure(fake_llm: FakeLLMClient, store: Cand
 
     events = collect_events(fake_llm, store)
 
-    assert events[1].success is False
-    assert "rechercher_creneaux_entretien" in events[1].summary
+    assert events[2].success is False
+    assert "rechercher_creneaux_entretien" in events[2].summary
 
 
 def test_iteration_limit_answer_is_streamed(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
@@ -351,7 +350,7 @@ def test_closed_or_scheduled_candidate_does_not_consume_a_slot(
     reply = run(fake_llm, store)
 
     assert tool_results(reply)[1]["statut"] == "ERREUR"
-    assert RECRUITER_AGENDA["2026-10-15"] == ["09:00", "11:00", "14:30", "16:00"]
+    assert RECRUITER_AGENDA["2026-10-15"] == INITIAL_SLOTS_2026_10_15
 
 
 def test_status_tool_cannot_schedule_without_booking(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
@@ -380,7 +379,10 @@ def test_status_tool_can_reject_a_candidate(fake_llm: FakeLLMClient, store: Cand
 
 
 def test_rejected_search_does_not_allow_booking_later(fake_llm: FakeLLMClient, store: CandidateStore) -> None:
-    fake_llm.tool_answers = [tool_call("rechercher_creneaux_entretien", date="2026-10-15", force=True), final("Erreur.")]
+    fake_llm.tool_answers = [
+        tool_call("rechercher_creneaux_entretien", date="2026-10-15", force=True),
+        final("Erreur."),
+    ]
     first = run(fake_llm, store)
     fake_llm.tool_answers = [tool_call("reserver_entretien", heure="09:00", **JEAN), final("Ok.")]
 
@@ -396,7 +398,7 @@ def test_storage_failure_is_not_reported_as_invalid_arguments(
     def broken(email: str) -> None:
         raise RuntimeError("base illisible")
 
-    monkeypatch.setattr(store, "find_by_email", broken)
+    monkeypatch.setattr(store, "find_all_by_email", broken)
     fake_llm.tool_answers = list(SEARCH_THEN_BOOK)
 
     with pytest.raises(RuntimeError):

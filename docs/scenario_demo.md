@@ -53,7 +53,7 @@ Montrez les 4 onglets.
 
 ### 4:30 – 5:00 · Conclusion
 
-> « Les 3 tests officiels passent aussi en automatique (`pytest -m llm`), avec un rapport de résultats dans le README : 9 CVs sur 9 analysés, 12 refus sur 12, et un audit externe offensif dont les constats ont tous été corrigés (docs/rapport_audit.md). »
+> « Les 3 tests officiels passent aussi en automatique (`pytest -m llm`), avec un rapport de résultats dans le README : 9 CVs sur 9 analysés, 12 refus sur 12, et des audits offensifs dont les constats ont été corrigés ou documentés comme limites (docs/rapport_audit.md). »
 
 ## En cas de problème
 

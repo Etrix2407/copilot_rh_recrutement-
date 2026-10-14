@@ -38,6 +38,22 @@ class CVReaderBusyError(Exception):
         super().__init__("Trop d'analyses de PDF en cours. Réessayez dans quelques secondes.")
 
 
+SUPPORTED_SUFFIXES = (".pdf", ".txt")
+# Caractères qui s'affichent comme un blanc sans être des espaces au sens de Python
+_BLANK_LOOKALIKES = frozenset({"⠀", "ㅤ", "ﾠ", "ᅟ", "ᅠ"})
+
+
+def check_cv_request(*, filename: str | None, has_file: bool, has_text: bool) -> None:
+    """Contrôles immédiats, avant toute lecture : un fichier OU un texte, et un format pris en charge.
+
+    Lève CVReadError ; permet de refuser une demande invalide sans consommer le quota.
+    """
+    if has_file == has_text:
+        raise CVReadError("Envoyez soit un fichier, soit du texte.")
+    if has_file and PurePath(filename or "").suffix.lower() not in SUPPORTED_SUFFIXES:
+        raise CVReadError("Format non pris en charge : envoyez un fichier .pdf ou .txt.")
+
+
 def extract_cv_text(*, filename: str | None, content: bytes | None, text: str | None) -> str:
     """Renvoie le texte du CV, venant soit d'un fichier (nom + contenu), soit d'un texte collé.
 
@@ -177,7 +193,9 @@ def _watch_memory_windows(max_memory: int) -> None:
 
 def _visible_text(text: str) -> str:
     """Texte sans espaces ni caractères invisibles (espaces de largeur nulle, caractères de contrôle…)."""
-    return "".join(char for char in text if char.isprintable() and not char.isspace())
+    return "".join(
+        char for char in text if char.isprintable() and not char.isspace() and char not in _BLANK_LOOKALIKES
+    )
 
 
 def _decode_text(content: bytes) -> str:

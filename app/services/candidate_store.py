@@ -80,13 +80,16 @@ class CandidateStore:
         if not deleted:
             raise CandidateNotFoundError(candidate_id)
 
-    def find_by_email(self, email: str) -> Candidate | None:
-        """Renvoie le candidat le plus récent ayant cet email (sans tenir compte de la casse), ou None."""
+    def find_all_by_email(self, email: str) -> list[Candidate]:
+        """Renvoie les candidats ayant cet email (sans tenir compte de la casse), du plus ancien au plus récent.
+
+        Plusieurs dossiers peuvent partager un email (ex. adresse familiale) : à l'appelant de départager.
+        Un email vide ne correspond à aucun dossier.
+        """
         wanted = email.strip().casefold()
         if not wanted:
-            return None
-        matches = [candidate for candidate in self.list_all() if (candidate.email or "").casefold() == wanted]
-        return matches[-1] if matches else None
+            return []
+        return [candidate for candidate in self.list_all() if (candidate.email or "").strip().casefold() == wanted]
 
     def update_status(self, candidate_id: str, status: CandidateStatus) -> Candidate:
         return self._transition(candidate_id, status)

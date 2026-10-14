@@ -1,27 +1,18 @@
 import datetime
-import json
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_llm_client
+from app.api.dependencies import get_conversation_store, get_llm_client
 from app.config import Settings
 from app.llm.base import LLMError, Message, Role, ToolCall
 from app.main import create_app
 from app.messages import LLM_UNAVAILABLE
-from tests.fakes import FakeEmbeddingFunction, FakeLLMClient
+from app.services.agent_chat import TURN_TIMEOUT_SECONDS, ConversationStore
+from tests.fakes import FakeEmbeddingFunction, FakeLLMClient, parse_sse
 
 CHAT_URL = "/api/agent/chat"
-
-
-def parse_sse(body: str) -> list[tuple[str, dict[str, object]]]:
-    """Renvoie les événements (nom, données) d'un flux SSE, sans les commentaires de maintien."""
-    events = []
-    for block in body.strip().split("\n\n"):
-        fields = dict(line.split(": ", 1) for line in block.splitlines() if not line.startswith(":"))
-        if fields:
-            events.append((fields["event"], json.loads(fields["data"])))
-    return events
 
 
 def post_chat(client: TestClient, **payload: object) -> list[tuple[str, dict[str, object]]]:
@@ -101,3 +92,106 @@ def test_demo_date_is_given_to_the_agent(test_settings: Settings, fake_llm: Fake
         client.post(CHAT_URL, json={"message": "Bonjour"})
 
     assert "Date du jour : 2026-10-14." in fake_llm.tool_calls[0]["system"]
+
+
+# --- Un seul tour à la fois par conversation (deux onglets) ---
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def conversations(clock: FakeClock) -> ConversationStore:
+    store = ConversationStore(clock=clock)
+    store.save("conv-1", [Message(role=Role.USER, content="Bonjour"), Message(role=Role.ASSISTANT, content="Salut")])
+    return store
+
+
+@pytest.fixture
+def limited_client(
+    test_settings: Settings, fake_llm: FakeLLMClient, conversations: ConversationStore
+) -> Iterator[TestClient]:
+    """Application limitée à 1 demande au LLM par minute, avec un magasin de conversations contrôlé."""
+    settings = test_settings.model_copy(update={"llm_requests_per_minute": 1})
+    app = create_app(settings, embedding_function=FakeEmbeddingFunction())
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
+    app.dependency_overrides[get_conversation_store] = lambda: conversations
+    fake_llm.tool_answers = [Message(role=Role.ASSISTANT, content="Bonjour")]
+    with TestClient(app) as client:
+        yield client
+
+
+def test_second_turn_on_busy_conversation_returns_409_without_llm_nor_quota(
+    limited_client: TestClient, fake_llm: FakeLLMClient, conversations: ConversationStore
+) -> None:
+    conversations.start_turn("conv-1")  # tour en cours dans un autre onglet
+
+    response = limited_client.post(CHAT_URL, json={"message": "Encore ?", "conversation_id": "conv-1"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Une réponse est déjà en cours pour cette conversation."
+    assert fake_llm.tool_calls == []
+    # Le quota (1 par minute) n'a pas été consommé
+    assert limited_client.post(CHAT_URL, json={"message": "Bonjour"}).status_code == 200
+
+
+def test_conversation_is_released_after_the_turn(client: TestClient, fake_llm: FakeLLMClient) -> None:
+    fake_llm.tool_answers = [Message(role=Role.ASSISTANT, content="Bonjour")] * 3
+    conversation_id = post_chat(client, message="Bonjour")[-1][1]["conversation_id"]
+
+    post_chat(client, message="Encore ?", conversation_id=conversation_id)
+    events = post_chat(client, message="Et encore ?", conversation_id=conversation_id)
+
+    assert events[-1][0] == "done"
+
+
+def test_busy_conversation_expires(
+    limited_client: TestClient, conversations: ConversationStore, clock: FakeClock
+) -> None:
+    # Flux jamais lu (client parti avant le premier événement) : la conversation n'est pas bloquée à vie
+    conversations.start_turn("conv-1")
+    clock.now = TURN_TIMEOUT_SECONDS
+
+    response = limited_client.post(CHAT_URL, json={"message": "Encore ?", "conversation_id": "conv-1"})
+
+    assert response.status_code == 200
+
+
+def test_rate_limited_turn_does_not_keep_the_conversation_busy(
+    limited_client: TestClient, conversations: ConversationStore
+) -> None:
+    assert limited_client.post(CHAT_URL, json={"message": "Bonjour"}).status_code == 200
+
+    response = limited_client.post(CHAT_URL, json={"message": "Encore ?", "conversation_id": "conv-1"})
+
+    assert response.status_code == 429
+    assert conversations.start_turn("conv-1") is True
+
+
+def test_erasure_during_turn_is_not_undone(
+    limited_client: TestClient, conversations: ConversationStore, fake_llm: FakeLLMClient
+) -> None:
+    # Effacement RGPD pendant que l'agent répond (simulé au moment de l'appel au LLM)
+    original = fake_llm.stream_with_tools
+
+    def erase_then_answer(*args: object, **kwargs: object) -> AsyncIterator[str | Message]:
+        conversations.forget_mentions(["Jean Dupont"])
+        return original(*args, **kwargs)
+
+    fake_llm.stream_with_tools = erase_then_answer  # type: ignore[method-assign]
+
+    events = post_chat(limited_client, message="Réserve Jean Dupont", conversation_id="conv-1")
+
+    assert events[-1][0] == "done"
+    response = limited_client.post(CHAT_URL, json={"message": "Encore ?", "conversation_id": "conv-1"})
+    assert response.status_code == 404

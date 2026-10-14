@@ -55,7 +55,10 @@ async def generate_validated(
                 Message(role=Role.ASSISTANT, content=raw_answer),
                 Message(
                     role=Role.USER,
-                    content=f"Ta réponse ne respecte pas le schéma attendu :\n{exc}\nRenvoie la réponse complète corrigée.",
+                    content=(
+                        f"Ta réponse ne respecte pas le schéma attendu :\n{exc}\n"
+                        "Renvoie la réponse complète corrigée."
+                    ),
                 ),
             ]
 

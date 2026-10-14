@@ -34,6 +34,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # Vérifie le style et les erreurs courantes (règles dans pyproject.toml)
+      - name: Lint (ruff)
+        run: ruff check .
+
       # Lance la suite rapide (sans les tests -m llm)
       - name: Lancer pytest
         run: pytest
+
+  # Tests JavaScript de l'interface (node:test, sans dépendance), lancés une seule fois
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Node 22 : nécessaire pour les motifs de fichiers dans « node --test »
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # Limite de durée : une boucle infinie dans l'affichage bloquerait sinon le job sans fin
+      - name: Tests de l'interface
+        timeout-minutes: 5
+        run: node --test "tests/frontend/*.test.mjs"

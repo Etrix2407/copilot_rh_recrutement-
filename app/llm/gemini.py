@@ -1,7 +1,7 @@
 """Adaptateur Gemini : seul module autorisé à importer le SDK google-genai."""
 
-from collections.abc import AsyncIterator, Sequence
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import aclosing, contextmanager
 
 import httpx
 from google import genai
@@ -87,7 +87,7 @@ class GeminiClient:
         )
         texts: list[str] = []
         tool_calls: list[ToolCall] = []
-        try:
+        with _as_llm_error(self._model):
             stream = await self._client.aio.models.generate_content_stream(
                 model=self._model,
                 contents=_to_contents(messages),
@@ -110,10 +110,6 @@ class GeminiClient:
                                     signature=part.thought_signature,
                                 )
                             )
-        except errors.APIError as exc:
-            raise LLMError(f"Appel à Gemini ({self._model}) échoué : {exc}") from exc
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Gemini ({self._model}) injoignable : {exc}") from exc
 
         if not texts and not tool_calls:
             raise LLMError(f"Gemini ({self._model}) a renvoyé une réponse vide.")
@@ -125,17 +121,24 @@ class GeminiClient:
         contents: str | list[types.Content],
         config: types.GenerateContentConfig | None,
     ) -> types.GenerateContentResponse:
-        try:
+        with _as_llm_error(self._model):
             return await self._client.aio.models.generate_content(
                 model=self._model,
                 contents=contents,
                 config=config,
             )
-        except errors.APIError as exc:
-            raise LLMError(f"Appel à Gemini ({self._model}) échoué : {exc}") from exc
-        # Le SDK laisse passer les erreurs réseau (connexion, timeout) de son client httpx
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Gemini ({self._model}) injoignable : {exc}") from exc
+
+
+@contextmanager
+def _as_llm_error(model: str) -> Iterator[None]:
+    """Convertit les erreurs du fournisseur en LLMError, la seule erreur que connaît le reste de l'application."""
+    try:
+        yield
+    except errors.APIError as exc:
+        raise LLMError(f"Appel à Gemini ({model}) échoué : {exc}") from exc
+    # Le SDK laisse passer les erreurs réseau (connexion, timeout) de son client httpx
+    except httpx.HTTPError as exc:
+        raise LLMError(f"Gemini ({model}) injoignable : {exc}") from exc
 
 
 def _text_of(response: types.GenerateContentResponse, model: str) -> str:

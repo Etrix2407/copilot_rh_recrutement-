@@ -47,7 +47,10 @@ async def _validation_error(request: Request, exc: RequestValidationError) -> JS
     summary = [{key: error[key] for key in ("type", "loc", "msg") if key in error} for error in errors]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content={"detail": _describe(errors[0]) if errors else "Requête invalide.", "errors": jsonable_encoder(summary)},
+        content={
+            "detail": _describe(errors[0]) if errors else "Requête invalide.",
+            "errors": jsonable_encoder(summary),
+        },
     )
 
 
