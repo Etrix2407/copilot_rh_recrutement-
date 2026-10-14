@@ -78,7 +78,7 @@ Au premier lancement, le modèle d'embedding (environ 80 Mo) est téléchargé, 
 | `DELETE` | `/api/candidates/{id}` | Supprime un candidat et son analyse (RGPD) |
 | `GET` | `/api/candidates/samples` | CVs d'exemple du cahier des charges |
 | `POST` | `/api/rag/ask` | Pose une question sur les politiques RH |
-| `GET` | `/api/interviews/slots` | Créneaux d'entretien libres à une date |
+| `GET` | `/api/interviews/slots` | Créneaux d'entretien libres à une date, pour un candidat existant (`candidate_id` et `date` obligatoires) |
 | `POST` | `/api/agent/chat` | Chat avec l'agent, en streaming (SSE) |
 
 Toutes les erreurs ont la même forme : `{"detail": "<message lisible en français>"}`. Les erreurs de validation (422) ajoutent la liste technique dans `errors`.
@@ -143,7 +143,7 @@ Architecture en couches, avec un port et des adaptateurs pour le LLM :
 | **Garde-fous de l'agent dans le code** | Outils en liste fermée, arguments validés, recherche obligatoire avant réservation, dossier du candidat vérifié avant de prendre un créneau, 8 itérations au maximum : ces règles tiennent même si le LLM est trompé. |
 | **Noms d'outils du cahier pour le LLM, noms anglais dans le code** | Le cahier impose les noms `rechercher_creneaux_entretien` et `reserver_entretien` : c'est ce que l'agent appelle et ce qui apparaît dans les logs. Le code Python reste homogène, en anglais. |
 | **SSE natif de FastAPI** | Streaming mot à mot sans dépendance supplémentaire, arrêt de la génération si le client se déconnecte. |
-| **Interface sans framework ni build** | 4 pages simples servies par l'API elle-même : un seul serveur, pas de CORS, rien à installer côté frontend. |
+| **Interface sans framework ni build** | Une page à 4 onglets servie par l'API elle-même : un seul serveur, pas de CORS, rien à installer côté frontend. |
 | **SQLite pour les candidats** | Fournie avec Python, sans serveur : les candidats survivent aux redémarrages. |
 
 ## Tests
@@ -152,6 +152,8 @@ Architecture en couches, avec un port et des adaptateurs pour le LLM :
 pytest                      # tests rapides, sans réseau (faux LLM)
 pytest -m llm               # tests officiels et critères d'évaluation avec le vrai LLM (consomme du quota)
 python -m scripts.evaluate  # rapport de résultats ci-dessous (environ 25 appels, 4 à 5 minutes)
+node --test "tests/frontend/*.test.mjs"   # tests de l'interface (Node 22 ou plus, aucune dépendance)
+ruff check .                # lint (règles dans pyproject.toml)
 ```
 
 Les tests rapides tournent aussi à chaque push et pull request grâce à l'intégration continue GitHub Actions (`.github/workflows/tests.yml`), sans clé API.
@@ -186,17 +188,17 @@ Testée avec le vrai LLM (`tests/test_official_agent.py`, et de bout en bout via
 
 ### Délais du chat (test officiel 3)
 
-| Mesure | Mesure finale | Écart observé dans la journée |
+| Mesure (côté serveur) | Mesure finale | Écart observé dans la journée |
 | --- | --- | --- |
-| Premier retour affiché (carte d'outil) | 1,0 s | 1,0 à 6,2 s |
+| Premier retour (carte d'outil) | 1,0 s | 1,0 à 6,2 s |
 | Premier mot de la réponse | 3,0 s | 3,0 à 8,3 s |
 | Réponse complète | 3,0 s | 3,0 à 11,4 s |
 
-Les écarts viennent des temps de réponse de Gemini en offre gratuite. Gemini envoie ses mots par paquets : l'interface les révèle un par un (environ 40 ms par mot), après avoir montré chaque outil en cours d'exécution pendant au moins 0,4 s, pour que l'utilisateur voie l'agent travailler en direct.
+Ces délais sont mesurés côté serveur par `scripts/evaluate.py` (événements émis), hors réseau et hors affichage. Les écarts viennent des temps de réponse de Gemini en offre gratuite. Gemini envoie ses mots par paquets : l'interface les révèle un par un (environ 40 ms par mot), après avoir montré chaque outil en cours d'exécution pendant au moins 0,4 s, pour que l'utilisateur voie l'agent travailler en direct.
 
 ## Sécurité
 
-Le code a fait l'objet d'un audit externe offensif (pentest, tests destructifs, conformité) : voir le [rapport d'audit](docs/rapport_audit.md).
+Le code a fait l'objet d'audits offensifs successifs (pentest, tests destructifs, conformité), menés par des agents IA indépendants du développement : voir le [rapport d'audit](docs/rapport_audit.md).
 
 - **Injection de prompt** : CV et questions sont délimités comme des données (balises `<cv>` et `<question>`) ; les règles de l'agent (outils autorisés, arguments validés, recherche dont le résultat a été vu avant toute réservation, nom et email du candidat contrôlés ensemble, une seule réservation par demande, statut « entretien planifié » posé seulement par une vraie réservation) sont garanties par le code, pas seulement par le prompt.
 - **Fichiers** : 2 Mo et 10 pages au maximum, 30 000 caractères de texte ; l'extraction d'un PDF tourne dans un processus séparé, arrêté au bout de 10 s ou au-delà de 400 Mo de mémoire (protection contre les « bombes » PDF), 2 au maximum en parallèle (au-delà, refus immédiat 503).
@@ -211,7 +213,7 @@ Le projet est une démonstration locale, mono-utilisateur :
 
 - **Pas d'authentification** : à lancer uniquement sur `127.0.0.1` (le défaut d'uvicorn), jamais avec `--host 0.0.0.0`.
 - **Agenda du recruteur en mémoire** : c'est la donnée simulée du cahier des charges. Il revient à son état initial au redémarrage, alors que les candidats sont conservés : un candidat peut rester « Entretien planifié » alors que son créneau est redevenu libre.
-- **Conversations en mémoire** : elles sont perdues au redémarrage ; 100 conversations au maximum, et une conversation de plus de 60 messages n'accepte plus de nouvelle demande. Deux onglets sur la même conversation peuvent s'écraser : un onglet par conversation.
+- **Conversations en mémoire** : elles sont perdues au redémarrage ; 100 conversations au maximum, et une conversation de plus de 60 messages n'accepte plus de nouvelle demande. Une conversation n'accepte qu'une réponse à la fois (une seconde demande simultanée reçoit 409) ; cette réservation expire après 120 s, au-delà desquelles un tour très long pourrait chevaucher le suivant (un tour réel dure 3 à 11 s).
 - **Un seul worker** : l'agenda et les limites de débit sont propres au processus.
 - **Invitations simulées** : `book_interview` annonce l'envoi de l'invitation, sans envoyer d'email.
 
