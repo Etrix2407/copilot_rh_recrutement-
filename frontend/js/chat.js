@@ -1,8 +1,8 @@
 // Page « Planifier un entretien » : chat avec l'agent, affiché mot à mot.
 
 import { postSse } from "./api.js";
-import { el } from "./dom.js";
-import { TOOL_LABELS } from "./labels.js";
+import { el, icon } from "./dom.js";
+import { toolLabel } from "./labels.js";
 
 const log = document.getElementById("chat-log");
 const empty = document.getElementById("chat-empty");
@@ -25,6 +25,7 @@ export const timing = {
 
 let conversationId = null;
 let controller = null; // présent tant qu'une demande est en cours
+let thinking = null; // bulle « L'assistant réfléchit… », retirée dès que quelque chose s'affiche
 
 // File d'affichage : les mises à jour de l'écran sont jouées dans l'ordre, chacune suivie de sa pause
 const display = [];
@@ -78,9 +79,10 @@ export function initChat() {
     event.preventDefault();
     send();
   });
-  // Entrée envoie, Maj + Entrée va à la ligne
+  // Entrée envoie, Maj + Entrée va à la ligne ; pendant une saisie de caractères composés
+  // (accents, japonais… : isComposing), Entrée valide le caractère et n'envoie rien
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       send();
     }
@@ -106,12 +108,16 @@ function reset() {
   setBusy(false);
   dropDisplay();
   conversationId = null;
+  thinking = null;
   log.replaceChildren();
   empty.hidden = false;
   input.focus();
 }
 
+// Tout nouvel élément du fil remplace la bulle « réfléchit »
 function addItem(item) {
+  thinking?.remove();
+  thinking = null;
   empty.hidden = true;
   log.append(item);
   item.scrollIntoView({ block: "nearest" });
@@ -132,6 +138,12 @@ async function send() {
   if (!message || controller) return;
   input.value = "";
   addMessage("user", message);
+  // Retour immédiat : on voit que la demande est partie avant le premier mot
+  thinking = addItem(el("li", { className: "message assistant thinking" }, [
+    el("span", { className: "who", text: "Assistant" }),
+    el("span", { className: "loading", text: "L'assistant réfléchit…" }),
+  ]));
+  announcer.textContent = "Recherche en cours…";
 
   let answer = null; // bulle de l'assistant, créée au premier mot
   const toolCards = [];
@@ -162,13 +174,16 @@ async function send() {
           show(() => {
             // Une nouvelle bulle suivra les outils : le texte d'avant reste au-dessus
             answer = null;
-            const label = TOOL_LABELS[data.name] ?? data.name;
-            toolCards.push(addItem(el("li", { className: "tool-card", text: `🔧 ${label}…` })));
+            const label = toolLabel(data.name);
+            const card = addItem(el("li", { className: "tool-card" }, [icon("🔧"), ` ${label}…`]));
+            card.dataset.label = label;
+            toolCards.push(card);
           }, timing.toolCardMs);
         } else if (name === "tool_result") {
           show(() => {
             const card = toolCards.shift();
             if (card) finishToolCard(card, data);
+            announcer.textContent = `${toolLabel(data.name)} : ${data.success ? "réussie" : "échouée"}`;
           });
         } else if (name === "done") {
           finished = true;
@@ -193,9 +208,10 @@ async function send() {
     await displayed();
     // Demande refusée avant toute réponse (quota, conversation expirée…) : le texte saisi est rendu
     if (error.status && !input.value) input.value = message;
-    if (error.name === "AbortError") {
-      // Réponse déjà complète (done ou error reçu) : l'arrêt n'a rien coupé
-      if (!finished) addError("Réponse arrêtée.");
+    if (finished) {
+      // Réponse déjà complète (done ou error reçu) : un arrêt ou une coupure ensuite n'a rien perdu
+    } else if (error.name === "AbortError") {
+      addError("Réponse arrêtée.");
     } else if (error.status === 404) {
       // Conversation oubliée par le serveur (redémarrage) : la prochaine demande en ouvre une nouvelle
       conversationId = null;
@@ -206,8 +222,10 @@ async function send() {
       // Outils lancés dont le résultat n'est jamais arrivé : on ne sait pas s'ils ont réussi
       for (const card of toolCards) {
         card.className = "tool-card level-medium";
-        card.textContent = `⚠ ${card.textContent.replace(/^🔧 |…$/gu, "")} : résultat non reçu`;
+        card.replaceChildren(icon("⚠"), ` ${card.dataset.label} : résultat non reçu`);
       }
+      thinking?.remove();
+      thinking = null;
       controller = null;
       setBusy(false);
       input.focus();
@@ -216,10 +234,10 @@ async function send() {
 }
 
 function finishToolCard(card, result) {
-  const label = TOOL_LABELS[result.name] ?? result.name;
   card.className = `tool-card ${result.success ? "done" : "failed"}`;
   card.replaceChildren(
-    `${result.success ? "✔" : "✖"} ${label}`,
+    icon(result.success ? "✔" : "✖"),
+    ` ${toolLabel(result.name)}`,
     el("span", { className: "detail", text: result.summary }),
   );
 }

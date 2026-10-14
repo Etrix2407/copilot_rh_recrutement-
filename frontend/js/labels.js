@@ -26,6 +26,16 @@ export const TOOL_LABELS = {
   mettre_a_jour_statut_candidat: "Mise à jour du statut",
 };
 
+// Outil inconnu (ajouté côté serveur) : libellé générique plutôt que le nom technique
+export function toolLabel(name) {
+  return TOOL_LABELS[name] ?? "Action de l'assistant";
+}
+
+// « 1 an », « 1,5 an », « 3 ans » : pluriel à partir de 2, nombre écrit à la française
+export function yearsLabel(years) {
+  return `${years.toLocaleString("fr-FR")} ${years < 2 ? "an" : "ans"}`;
+}
+
 // Niveau du score : la couleur est toujours doublée d'un mot, pour ne pas dépendre de la vue des couleurs
 export function scoreLevel(score) {
   if (score >= 70) return { className: "level-good", label: "Très bon profil" };

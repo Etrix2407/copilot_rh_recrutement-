@@ -5,10 +5,14 @@
   --surface: #ffffff;
   --text: #1a1d23;
   --muted: #4a5160;
+  /* Séparateurs (décoratifs) ; les contours des champs et boutons utilisent --control-border */
   --border: #c9ced8;
+  /* Contraste ≥ 3:1 sur tous les fonds (WCAG 1.4.11) : 3,18 à 3,76 */
+  --control-border: #7c8494;
   --primary: #0b57d0;
   --primary-text: #ffffff;
-  --focus: #e8710a;
+  /* Contraste ≥ 3:1 sur tous les fonds : 4,37 à 5,18 */
+  --focus: #c2410c;
   --good: #146c2e;
   --good-bg: #e3f4e8;
   --medium: #8a4b00;
@@ -27,6 +31,8 @@
     --text: #eef0f4;
     --muted: #b4bac6;
     --border: #3d4350;
+    /* Contraste ≥ 3:1 sur tous les fonds sombres : 3,49 à 4,78 */
+    --control-border: #7a8294;
     --primary: #8ab4f8;
     --primary-text: #0d1b33;
     --focus: #fbbc63;
@@ -146,10 +152,12 @@ textarea, input[type="file"], select {
   font: inherit;
   color: var(--text);
   background: var(--surface);
-  border: 2px solid var(--border);
+  border: 2px solid var(--control-border);
   border-radius: var(--radius);
   padding: 0.65rem 0.75rem;
 }
+/* Champ en erreur : bordure rouge en plus du message */
+[aria-invalid="true"] { border-color: var(--bad); }
 textarea { resize: vertical; }
 select { width: auto; min-height: 3rem; }
 
@@ -162,7 +170,7 @@ select { width: auto; min-height: 3rem; }
   font-weight: 600;
   color: var(--text);
   background: var(--surface);
-  border: 2px solid var(--border);
+  border: 2px solid var(--control-border);
   border-radius: var(--radius);
   cursor: pointer;
 }
@@ -182,11 +190,13 @@ select { width: auto; min-height: 3rem; }
   font: inherit;
   color: var(--primary);
   background: var(--info-bg);
-  border: 2px solid transparent;
+  border: 1px solid var(--primary);
   border-radius: 999px;
   cursor: pointer;
 }
-.chip:hover { border-color: var(--primary); }
+.chip:hover { box-shadow: inset 0 0 0 1px var(--primary); }
+
+#cv-file-clear { margin-top: 0.25rem; }
 
 .toolbar {
   display: flex;
@@ -240,7 +250,7 @@ select { width: auto; min-height: 3rem; }
   flex: 1 1 12rem;
   height: 1.25rem;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -273,6 +283,22 @@ select { width: auto; min-height: 3rem; }
 }
 .warnings h3 { margin-top: 0; color: var(--bad); }
 
+/* Synthèse au-dessus du tableau des candidats */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+.stats li {
+  padding: 0.35rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
 /* Tableau des candidats */
 .table-wrapper { overflow-x: auto; }
 table {
@@ -285,6 +311,25 @@ table {
 th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
 th { background: var(--bg); }
 td.number { font-weight: 700; white-space: nowrap; }
+/* Une adresse email longue passe à la ligne au lieu d'élargir la page */
+td.email, .facts dd { overflow-wrap: anywhere; }
+
+/* Nom du candidat : bouton présenté comme un lien, qui ouvre son analyse */
+.link-button {
+  min-height: 2.75rem;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--primary);
+  text-align: left;
+  text-decoration: underline;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.link-button[aria-expanded="true"] { text-decoration-thickness: 3px; }
+#candidate-details { margin-top: 1rem; }
+.details-actions { margin-top: 1rem; }
 
 .badge {
   display: inline-block;
@@ -324,6 +369,7 @@ td.number { font-weight: 700; white-space: nowrap; }
 .message.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); }
 .message .who { display: block; font-size: 0.85rem; font-weight: 700; opacity: 0.85; }
 .message.error { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+.message.thinking { color: var(--muted); font-style: italic; }
 
 .tool-card {
   align-self: flex-start;
@@ -339,14 +385,55 @@ td.number { font-weight: 700; white-space: nowrap; }
 .chat-form { margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: 1rem; }
 .chat-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
 
+/* Petits écrans : chaque candidat devient une carte, chaque valeur précédée du nom de sa colonne */
+@media (max-width: 48rem) {
+  table, tbody, tr, th, td { display: block; }
+  table { border: none; background: none; }
+  thead { display: none; }
+  tbody tr {
+    margin-bottom: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  tbody th, tbody td { border-bottom: none; padding: 0.4rem 0.9rem; }
+  tbody th { background: none; padding-top: 0.75rem; }
+  tbody td:last-child { padding-bottom: 0.75rem; }
+  tbody th::before, tbody td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--muted);
+  }
+}
+
 /* Téléphones */
 @media (max-width: 40rem) {
   html { font-size: 106.25%; } /* 17 px */
-  .tabs { flex-direction: column; }
-  .tabs a { border-radius: var(--radius); border: 2px solid var(--border); }
-  .tabs a[aria-current="page"] { box-shadow: inset 4px 0 0 var(--primary); }
+  /* Onglets en grille 2 × 2 plutôt que quatre lignes empilées */
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+  .tabs a {
+    height: 100%;
+    padding: 0.6rem 0.5rem;
+    text-align: center;
+    border-radius: var(--radius);
+    border: 2px solid var(--control-border);
+  }
+  .tabs a[aria-current="page"] { border-color: var(--primary); box-shadow: inset 0 -4px 0 var(--primary); }
   .site-header { padding-bottom: 0.75rem; }
   .message { max-width: 100%; }
   .button { width: 100%; }
   .toolbar .button, .chat-actions .button { width: auto; flex: 1 1 auto; }
+}
+
+/* Mode contraste élevé (Windows) : les ombres et fonds de couleur disparaissent, on les remplace */
+@media (forced-colors: active) {
+  .tabs a[aria-current="page"] {
+    border: 2px solid CanvasText;
+    text-decoration: underline;
+    text-decoration-thickness: 3px;
+  }
+  .gauge { border-color: CanvasText; }
+  .gauge-fill { forced-color-adjust: none; background: Highlight; }
 }
