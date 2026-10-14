@@ -80,10 +80,10 @@ un readme en français pour github à la racine du projet
 
 ```
 app/
-  main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (app.state)
+  main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (état de lifespan)
   config.py        # Settings (pydantic-settings) lus depuis .env
   logging_config.py
-  api/             # routes FastAPI (health.py, candidates.py, rag.py…) ; dependencies.py donne un accès typé à app.state
+  api/             # routes FastAPI (health.py, candidates.py, rag.py…) ; dependencies.py donne un accès typé à request.state
   llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
   data/            # données du cahier des charges, contenu identique, noms traduits
   models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py…)

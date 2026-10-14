@@ -19,7 +19,7 @@ def test_parse_text_returns_analyzed_candidate(
     body = response.json()
     assert body["status"] == "analyzed"
     assert body["analysis"]["match_score"] == 90
-    stored = client.app.state.candidate_store.get(body["id"])
+    stored = client.app_state["candidate_store"].get(body["id"])
     assert stored.status == "analyzed"
 
 
@@ -61,7 +61,7 @@ def test_invalid_llm_answers_return_502(client: TestClient, fake_llm: FakeLLMCli
     response = client.post(PARSE_URL, data={"text": "CV"})
 
     assert response.status_code == 502
-    assert client.app.state.candidate_store.list_all() == []
+    assert client.app_state["candidate_store"].list_all() == []
 
 
 def test_llm_failure_returns_502(client: TestClient, fake_llm: FakeLLMClient) -> None:
