@@ -15,8 +15,36 @@ const stopButton = document.getElementById("chat-stop");
 // Raison d'arrêt utilisée par « Nouvelle conversation » : rien à afficher dans ce cas
 const RESET = "reset";
 
+// Le LLM envoie ses mots par paquets : l'interface les révèle un par un, à ce rythme
+const WORD_DELAY_MS = 40;
+// Durée minimale pendant laquelle une carte d'outil reste « en cours », pour qu'on la voie travailler
+const TOOL_CARD_MIN_MS = 400;
+
 let conversationId = null;
 let controller = null;
+
+// File d'affichage : les mises à jour de l'écran sont jouées dans l'ordre, chacune suivie de sa pause
+const display = [];
+let displaying = null; // promesse de la file en cours de lecture
+
+function show(update, pauseMs = 0) {
+  display.push({ update, pauseMs });
+  displaying ??= playDisplay();
+}
+
+async function playDisplay() {
+  while (display.length) {
+    const { update, pauseMs } = display.shift();
+    update();
+    if (pauseMs) await new Promise((resolve) => setTimeout(resolve, pauseMs));
+  }
+  displaying = null;
+}
+
+// Attend que tout ce qui a été reçu soit affiché
+async function displayed() {
+  while (displaying) await displaying;
+}
 
 export function initChat() {
   form.addEventListener("submit", (event) => {
@@ -36,12 +64,17 @@ export function initChat() {
       input.focus();
     });
   }
-  stopButton.addEventListener("click", () => controller?.abort());
+  stopButton.addEventListener("click", () => {
+    controller?.abort();
+    // Arrêt immédiat : ce qui n'est pas encore affiché ne le sera pas
+    display.length = 0;
+  });
   document.getElementById("chat-reset").addEventListener("click", reset);
 }
 
 function reset() {
   controller?.abort(RESET);
+  display.length = 0;
   conversationId = null;
   log.replaceChildren();
   empty.hidden = false;
@@ -72,6 +105,7 @@ async function send() {
 
   let answer = null; // bulle de l'assistant, créée au premier mot
   const toolCards = [];
+  let finished = false; // vrai dès qu'un événement done ou error est reçu
   controller = new AbortController();
   setBusy(true);
 
@@ -80,31 +114,61 @@ async function send() {
       "/api/agent/chat",
       { message, conversation_id: conversationId },
       (name, data) => {
-        if (name === "token") {
-          answer ??= addMessage("assistant");
-          answer.textContent += data.text;
-        } else if (name === "tool_start") {
-          // Une nouvelle bulle suivra les outils : le texte d'avant reste au-dessus
-          answer = null;
-          const label = TOOL_LABELS[data.name] ?? data.name;
-          toolCards.push(addItem(el("li", { className: "tool-card", text: `🔧 ${label}…` })));
-        } else if (name === "tool_result") {
-          const card = toolCards.shift();
-          if (card) finishToolCard(card, data);
-        } else if (name === "done") {
+        if (name === "start") {
+          // Connu dès le début : la conversation peut continuer même si la réponse est interrompue
           conversationId = data.conversation_id;
-          announcer.textContent = data.answer;
+        } else if (name === "token") {
+          show(() => {
+            answer ??= addMessage("assistant");
+            answer.textContent += data.text;
+            answer.scrollIntoView({ block: "nearest" });
+          }, WORD_DELAY_MS);
+        } else if (name === "tool_start") {
+          show(() => {
+            // Une nouvelle bulle suivra les outils : le texte d'avant reste au-dessus
+            answer = null;
+            const label = TOOL_LABELS[data.name] ?? data.name;
+            toolCards.push(addItem(el("li", { className: "tool-card", text: `🔧 ${label}…` })));
+          }, TOOL_CARD_MIN_MS);
+        } else if (name === "tool_result") {
+          show(() => {
+            const card = toolCards.shift();
+            if (card) finishToolCard(card, data);
+          });
+        } else if (name === "done") {
+          finished = true;
+          conversationId = data.conversation_id;
+          // Annoncé aux lecteurs d'écran une fois la réponse entièrement affichée
+          show(() => {
+            announcer.textContent = data.answer;
+          });
         } else if (name === "error") {
-          addError(data.message);
+          finished = true;
+          show(() => addError(data.message));
         }
       },
       controller.signal,
     );
+    await displayed();
+    // Flux fermé sans fin annoncée : coupure réseau ou serveur arrêté
+    if (!finished) addError("La réponse a été interrompue. Réessayez.");
   } catch (error) {
     if (error === RESET) return;
+    await displayed();
+    // Demande refusée avant toute réponse (quota, conversation expirée…) : le texte saisi est rendu
+    if (error.status && !input.value) input.value = message;
     if (error.name === "AbortError") addError("Réponse arrêtée.");
-    else addError(error.message);
+    else if (error.status === 404) {
+      // Conversation oubliée par le serveur (redémarrage) : la prochaine demande en ouvre une nouvelle
+      conversationId = null;
+      addError("Cette conversation a expiré. Renvoyez votre demande pour en commencer une nouvelle.");
+    } else addError(error.message);
   } finally {
+    // Outils lancés dont le résultat n'est jamais arrivé
+    for (const card of toolCards) {
+      card.className = "tool-card failed";
+      card.textContent = `✖ ${card.textContent.replace(/^🔧 |…$/gu, "")} : interrompu`;
+    }
     controller = null;
     setBusy(false);
     input.focus();
