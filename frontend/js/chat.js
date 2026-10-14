@@ -15,30 +15,57 @@ const stopButton = document.getElementById("chat-stop");
 // Raison d'arrêt utilisée par « Nouvelle conversation » : rien à afficher dans ce cas
 const RESET = "reset";
 
-// Le LLM envoie ses mots par paquets : l'interface les révèle un par un, à ce rythme
-const WORD_DELAY_MS = 40;
-// Durée minimale pendant laquelle une carte d'outil reste « en cours », pour qu'on la voie travailler
-const TOOL_CARD_MIN_MS = 400;
+// Rythme d'affichage, en millisecondes (exporté pour que les tests puissent l'accélérer)
+export const timing = {
+  // Le LLM envoie ses mots par paquets : l'interface les révèle un par un, à ce rythme
+  wordMs: 40,
+  // Durée minimale pendant laquelle une carte d'outil reste « en cours », pour qu'on la voie travailler
+  toolCardMs: 400,
+};
 
 let conversationId = null;
-let controller = null;
+let controller = null; // présent tant qu'une demande est en cours
 
 // File d'affichage : les mises à jour de l'écran sont jouées dans l'ordre, chacune suivie de sa pause
 const display = [];
 let displaying = null; // promesse de la file en cours de lecture
+let endPause = null; // termine tout de suite la pause en cours
 
 function show(update, pauseMs = 0) {
   display.push({ update, pauseMs });
-  displaying ??= playDisplay();
+  // Lecture lancée au tour suivant : appelée directement, une file sans pause se viderait avant
+  // l'affectation, et « displaying » garderait une promesse terminée (l'affichage se figerait)
+  displaying ??= Promise.resolve().then(playDisplay);
 }
 
 async function playDisplay() {
   while (display.length) {
     const { update, pauseMs } = display.shift();
     update();
-    if (pauseMs) await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    if (pauseMs) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, pauseMs);
+        endPause = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      endPause = null;
+    }
   }
   displaying = null;
+}
+
+// Affiche aussitôt, sans les pauses, tout ce qui a déjà été reçu (bouton « Arrêter »)
+function flushDisplay() {
+  endPause?.();
+  for (const { update } of display.splice(0)) update();
+}
+
+// Oublie tout ce qui n'est pas encore affiché (« Nouvelle conversation »)
+function dropDisplay() {
+  endPause?.();
+  display.length = 0;
 }
 
 // Attend que tout ce qui a été reçu soit affiché
@@ -66,15 +93,18 @@ export function initChat() {
   }
   stopButton.addEventListener("click", () => {
     controller?.abort();
-    // Arrêt immédiat : ce qui n'est pas encore affiché ne le sera pas
-    display.length = 0;
+    // Seul ce qui n'est pas encore arrivé est perdu : une réservation déjà confirmée reste visible
+    flushDisplay();
   });
   document.getElementById("chat-reset").addEventListener("click", reset);
 }
 
 function reset() {
   controller?.abort(RESET);
-  display.length = 0;
+  // La demande abandonnée ne touche plus à l'écran : un nouvel envoi est possible tout de suite
+  controller = null;
+  setBusy(false);
+  dropDisplay();
   conversationId = null;
   log.replaceChildren();
   empty.hidden = false;
@@ -106,7 +136,10 @@ async function send() {
   let answer = null; // bulle de l'assistant, créée au premier mot
   const toolCards = [];
   let finished = false; // vrai dès qu'un événement done ou error est reçu
-  controller = new AbortController();
+  const ownController = new AbortController();
+  controller = ownController;
+  // Faux après « Nouvelle conversation » : cette demande ne doit plus rien afficher
+  const isCurrent = () => controller === ownController;
   setBusy(true);
 
   try {
@@ -114,6 +147,8 @@ async function send() {
       "/api/agent/chat",
       { message, conversation_id: conversationId },
       (name, data) => {
+        // Après « Arrêter » ou « Nouvelle conversation », plus rien n'est affiché
+        if (!isCurrent() || ownController.signal.aborted) return;
         if (name === "start") {
           // Connu dès le début : la conversation peut continuer même si la réponse est interrompue
           conversationId = data.conversation_id;
@@ -122,14 +157,14 @@ async function send() {
             answer ??= addMessage("assistant");
             answer.textContent += data.text;
             answer.scrollIntoView({ block: "nearest" });
-          }, WORD_DELAY_MS);
+          }, timing.wordMs);
         } else if (name === "tool_start") {
           show(() => {
             // Une nouvelle bulle suivra les outils : le texte d'avant reste au-dessus
             answer = null;
             const label = TOOL_LABELS[data.name] ?? data.name;
             toolCards.push(addItem(el("li", { className: "tool-card", text: `🔧 ${label}…` })));
-          }, TOOL_CARD_MIN_MS);
+          }, timing.toolCardMs);
         } else if (name === "tool_result") {
           show(() => {
             const card = toolCards.shift();
@@ -147,31 +182,36 @@ async function send() {
           show(() => addError(data.message));
         }
       },
-      controller.signal,
+      ownController.signal,
     );
     await displayed();
+    if (!isCurrent()) return;
     // Flux fermé sans fin annoncée : coupure réseau ou serveur arrêté
     if (!finished) addError("La réponse a été interrompue. Réessayez.");
   } catch (error) {
-    if (error === RESET) return;
+    if (!isCurrent()) return;
     await displayed();
     // Demande refusée avant toute réponse (quota, conversation expirée…) : le texte saisi est rendu
     if (error.status && !input.value) input.value = message;
-    if (error.name === "AbortError") addError("Réponse arrêtée.");
-    else if (error.status === 404) {
+    if (error.name === "AbortError") {
+      // Réponse déjà complète (done ou error reçu) : l'arrêt n'a rien coupé
+      if (!finished) addError("Réponse arrêtée.");
+    } else if (error.status === 404) {
       // Conversation oubliée par le serveur (redémarrage) : la prochaine demande en ouvre une nouvelle
       conversationId = null;
       addError("Cette conversation a expiré. Renvoyez votre demande pour en commencer une nouvelle.");
     } else addError(error.message);
   } finally {
-    // Outils lancés dont le résultat n'est jamais arrivé
-    for (const card of toolCards) {
-      card.className = "tool-card failed";
-      card.textContent = `✖ ${card.textContent.replace(/^🔧 |…$/gu, "")} : interrompu`;
+    if (isCurrent()) {
+      // Outils lancés dont le résultat n'est jamais arrivé : on ne sait pas s'ils ont réussi
+      for (const card of toolCards) {
+        card.className = "tool-card level-medium";
+        card.textContent = `⚠ ${card.textContent.replace(/^🔧 |…$/gu, "")} : résultat non reçu`;
+      }
+      controller = null;
+      setBusy(false);
+      input.focus();
     }
-    controller = null;
-    setBusy(false);
-    input.focus();
   }
 }
 

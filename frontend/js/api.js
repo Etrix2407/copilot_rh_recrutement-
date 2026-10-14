@@ -3,11 +3,13 @@
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);
-    this.status = status; // code HTTP, ou 0 si le serveur est injoignable
+    // Code HTTP, ou 0 si la réponse n'a pas pu être lue (serveur injoignable, flux coupé ou illisible)
+    this.status = status;
   }
 }
 
-const NETWORK_ERROR = "Impossible de joindre le serveur. Vérifiez qu'il est bien lancé, puis réessayez.";
+export const NETWORK_ERROR = "Impossible de joindre le serveur. Vérifiez qu'il est bien lancé, puis réessayez.";
+export const UNREADABLE_RESPONSE = "Réponse illisible du serveur.";
 
 async function request(url, options) {
   let response;
@@ -66,14 +68,29 @@ export async function postSse(url, body, onEvent, signal) {
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += value.replaceAll("\r\n", "\n");
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      // Arrêt demandé par l'utilisateur : ce n'est pas une panne réseau
+      if (signal?.aborted) throw error;
+      throw new ApiError(NETWORK_ERROR, 0);
+    }
+    if (chunk.done) break;
+    // Normalisé sur le tampon entier : un \r\n peut être coupé entre deux morceaux
+    buffer = (buffer + chunk.value).replaceAll("\r\n", "\n");
     // Un événement se termine par une ligne vide ; la fin incomplète attend la suite
     const blocks = buffer.split("\n\n");
     buffer = blocks.pop();
     for (const block of blocks) {
-      const event = parseEvent(block);
+      let event;
+      try {
+        event = parseEvent(block);
+      } catch {
+        // Données qui ne sont pas du JSON : la suite du flux n'est pas lue
+        await reader.cancel().catch(() => {});
+        throw new ApiError(UNREADABLE_RESPONSE, 0);
+      }
       if (event) onEvent(event.name, event.data);
     }
   }
