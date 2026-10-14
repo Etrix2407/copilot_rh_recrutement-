@@ -6,6 +6,7 @@ Consomme du quota : environ 25 appels au LLM, espacés (compter 4 à 5 minutes).
 
 import asyncio
 import copy
+import datetime
 import sys
 import tempfile
 import time
@@ -20,7 +21,7 @@ from app.data.candidates import SAMPLE_CANDIDATE_1, SAMPLE_CANDIDATE_2
 from app.data.hr_policies import HR_POLICIES
 from app.llm.base import LLMClient, LLMError
 from app.llm.factory import create_llm_client
-from app.models.agent import ErrorEvent, TokenEvent
+from app.models.agent import ErrorEvent, TokenEvent, ToolStartEvent
 from app.services.agent_chat import ConversationStore, chat
 from app.services.candidate_store import CandidateStore
 from app.services.cv_parser import parse_cv
@@ -29,8 +30,9 @@ from app.services.policy_index import PolicyIndex, create_embedding_function
 from app.services.structured_output import InvalidLLMOutputError
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
-# Pause entre deux appels : le quota gratuit de Gemini limite à 15 requêtes par minute
+# Pause entre deux appels : le quota gratuit de Gemini limite le nombre de requêtes par minute
 PAUSE_SECONDS = 5
+EVALUATION_DATE = datetime.date(2026, 10, 14)
 AGENT_REQUEST = (
     "Trouve-moi un créneau le 2026-10-15 pour réserver un entretien avec Jean Dupont (jean.dupont@email.com)"
 )
@@ -67,7 +69,11 @@ async def evaluate_rag(llm: LLMClient) -> list[str]:
         refused = 0
         for question in questions:
             await asyncio.sleep(PAUSE_SECONDS)
-            answer = await ask_hr_policies(question, llm=llm, index=index)
+            try:
+                answer = await ask_hr_policies(question, llm=llm, index=index)
+            except (InvalidLLMOutputError, LLMError) as exc:
+                rows.append(f"| {question} | ❌ ({type(exc).__name__}) |")
+                continue
             ok = answer.answer == REFUSAL and not answer.sources
             refused += ok
             rows.append(f"| {question} | {'✅' if ok else '❌ ' + answer.answer} |")
@@ -79,6 +85,7 @@ async def evaluate_latency(llm: LLMClient) -> list[str]:
     initial_agenda = copy.deepcopy(RECRUITER_AGENDA)
     # Fenêtre de quota vidée : la mesure ne doit pas inclure l'attente d'une relance
     await asyncio.sleep(60)
+    store = CandidateStore()
     started = time.perf_counter()
     first_event = first_word = None
     try:
@@ -87,16 +94,21 @@ async def evaluate_latency(llm: LLMClient) -> list[str]:
             conversation_id="evaluation",
             history=[],
             llm=llm,
-            store=CandidateStore(),
+            store=store,
             conversations=ConversationStore(),
+            # Date fixe : l'agenda du cahier des charges ne contient que les 15 et 16/10/2026
+            today=EVALUATION_DATE,
         ):
             elapsed = time.perf_counter() - started
-            first_event = first_event or elapsed
+            # Seul ce que l'utilisateur voit compte : l'événement start (id de conversation) est invisible
+            if isinstance(event, ToolStartEvent | TokenEvent):
+                first_event = first_event or elapsed
             if isinstance(event, TokenEvent):
                 first_word = first_word or elapsed
             if isinstance(event, ErrorEvent):
                 return [f"Mesure impossible : {event.message}"]
     finally:
+        store.close()
         RECRUITER_AGENDA.clear()
         RECRUITER_AGENDA.update(initial_agenda)
     total = time.perf_counter() - started

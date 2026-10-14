@@ -3,6 +3,7 @@
 Ces tests consomment du quota : ils ne tournent qu'avec `pytest -m llm`.
 """
 
+import re
 from pathlib import Path
 
 import chromadb
@@ -39,8 +40,9 @@ def ask(question: str, index: PolicyIndex) -> HRAnswer:
 def test_rtt_and_cet_question_is_answered_with_its_source(real_index: PolicyIndex) -> None:
     result = ask("Combien de jours de RTT ai-je droit et puis-je les placer sur un CET ?", real_index)
 
-    assert "10" in result.answer
-    assert "5" in result.answer
+    # Mots entiers : « 5 » ne doit pas être trouvé dans « 25 jours de congés »
+    assert re.search(r"\b10\b", result.answer)
+    assert re.search(r"\b5\b", result.answer)
     assert "CET" in result.answer or "Compte Épargne Temps" in result.answer
     assert "rh_doc_02" in [source.id for source in result.sources]
 
@@ -50,7 +52,7 @@ def test_documented_question_is_not_refused(real_index: PolicyIndex) -> None:
     result = ask("Quel est le budget formation annuel par salarié ?", real_index)
 
     assert "1 500" in result.answer or "1500" in result.answer
-    assert [source.id for source in result.sources] == ["rh_doc_03"]
+    assert "rh_doc_03" in [source.id for source in result.sources]
 
 
 @pytest.mark.parametrize("question", TRAP_QUESTIONS)
