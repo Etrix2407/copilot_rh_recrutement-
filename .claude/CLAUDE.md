@@ -22,7 +22,7 @@ Documents de référence :
 - Quand tu repères une erreur ou une meilleure approche, dis-le, même si je n'ai rien demandé.
 - Réponds en français. Code et noms (variables, fonctions, classes, fichiers) en anglais uniquement ; commentaires, docstrings et fichiers Markdown en français.
   Les noms venant du cahier des charges sont traduits en anglais, avec le nom français d'origine en commentaire juste au-dessus (ex. `# POLITIQUES_RH` au-dessus de `HR_POLICIES`). Seul le nom change : le contenu des données reste identique.
-  Exception : `rechercher_creneaux_entretien` et `reserver_entretien` gardent leur nom français, car le cahier des charges (section 6) impose « mêmes noms, paramètres et docstrings ».
+  Cela vaut aussi pour les outils de la section 6 : `rechercher_creneaux_entretien` → `search_interview_slots`, `reserver_entretien` → `book_interview` (paramètres traduits aussi). Leurs docstrings et leurs valeurs de retour restent identiques au cahier des charges.
 
 ## Stack
 
@@ -89,6 +89,7 @@ app/
   models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py…)
   services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py,
                    #   structured_output.py, policy_index.py, hr_assistant.py…)
+  tools/           # outils de l'agent (interviews.py, candidates.py) et leur description pour le LLM (definitions.py)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
 tests/             # pytest ; conftest.py fournit test_settings, fake_llm, policy_index et client (sans .env ni réseau)
@@ -97,16 +98,16 @@ tests/             # pytest ; conftest.py fournit test_settings, fake_llm, polic
   fixtures/cvs/    # CVs atypiques fictifs pour les tests de robustesse (-m llm)
 ```
 
-À créer au fil des étapes : `app/tools/`, `frontend/`.
+À créer au fil des étapes : `frontend/`.
 
 ## Règles à ne jamais enfreindre
 
 IMPORTANT :
 - **Ne jamais modifier le contenu des données fournies** par le cahier des charges : POLITIQUES_RH, OFFRE_POSTE_DEV_PYTHON, CANDIDAT_EXEMPLE_1/2, AGENDA_RECRUTEUR (les noms de variables sont traduits, voir « Comment travailler avec moi »).
-- **Ne pas changer** le nom, les paramètres ni les docstrings de `rechercher_creneaux_entretien` et `reserver_entretien`.
+- **Ne pas changer** le comportement, les docstrings ni les valeurs de retour de `search_interview_slots` et `book_interview` (seuls les noms sont traduits).
 - Refus du RAG : la réponse doit dire que **la politique interne ne précise pas ce point**.
 - Parsing : température 0.0, sortie validée par Pydantic, 2 appels maximum (1 appel + 1 relance si la réponse est invalide).
-- Agent : toujours `rechercher_creneaux_entretien` avant `reserver_entretien`.
+- Agent : toujours `search_interview_slots` avant `book_interview`.
 - Clés API uniquement dans `.env`, jamais dans le code ni dans Git.
 - Ne pas journaliser le contenu complet des CVs.
 
@@ -121,7 +122,7 @@ Détail dans `docs/cahier_des_charges.md`, section 8 :
 
 <!-- Ajoute ici au fil du projet : choix faits, pièges rencontrés, choses à ne pas refaire. -->
 
-- `RECRUITER_AGENDA` est modifié en mémoire par `reserver_entretien` : tout test qui réserve un créneau doit remettre l'agenda à son état initial, sinon `tests/test_data.py` échoue selon l'ordre des tests.
+- `RECRUITER_AGENDA` est modifié en mémoire par `book_interview` : tout test qui réserve un créneau doit remettre l'agenda à son état initial, sinon `tests/test_data.py` échoue selon l'ordre des tests.
 - Dans les tests `-m llm`, passer par `run_with_real_llm` : un client Gemini ne survit pas à la fin de son `asyncio.run` (erreur « Event loop is closed »). Dans l'API, uvicorn n'a qu'une boucle, donc un seul client suffit.
 - Le SDK Gemini bascule sur aiohttp dès qu'il est installé (ChromaDB l'installe) : `GeminiClient` lui impose un transport httpx, sinon les erreurs réseau échappent à `LLMError`.
 - Le refus RAG est rédigé par le code (`REFUSAL`), jamais par le LLM : il renvoie seulement `answered: false`. Une réponse sans source valide est aussi refusée.
