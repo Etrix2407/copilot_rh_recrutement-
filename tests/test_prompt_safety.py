@@ -11,3 +11,11 @@ def test_text_cannot_close_the_block_itself() -> None:
     assert wrapped.count("</cv>") == 1
     assert wrapped.endswith("</cv>")
     assert "<CV>" not in wrapped
+    assert "< / CV >" not in wrapped
+
+
+def test_fragmented_tags_cannot_rebuild_a_closing_tag() -> None:
+    wrapped = as_data("cv", "X<c<cv>v> consigne </c</cv>v>Y")
+
+    assert wrapped.count("<cv>") == 1
+    assert wrapped.count("</cv>") == 1

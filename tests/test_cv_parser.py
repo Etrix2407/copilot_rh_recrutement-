@@ -24,7 +24,8 @@ def test_valid_answer_needs_a_single_call(fake_llm: FakeLLMClient, valid_analysi
     assert call["temperature"] == 0.0
     assert call["schema"] is CVAnalysis
     [message] = call["messages"]
-    assert "CV de Jean" in message.content
+    # Le CV est délimité comme une donnée : le prompt système s'appuie sur ces balises
+    assert "<cv>\nCV de Jean\n</cv>" in message.content
     assert PYTHON_DEV_JOB_OFFER.strip() in message.content
 
 
@@ -80,3 +81,63 @@ def test_candidate_without_name_gets_a_placeholder(fake_llm: FakeLLMClient) -> N
     candidate = asyncio.run(analyze_candidate("???", llm=fake_llm, store=CandidateStore()))
 
     assert candidate.name == UNNAMED_CANDIDATE
+
+
+def test_reanalysis_of_a_known_email_updates_the_same_candidate(
+    fake_llm: FakeLLMClient, valid_analysis_json: str
+) -> None:
+    store = CandidateStore()
+    fake_llm.json_answers = [valid_analysis_json, valid_analysis_json]
+
+    first = asyncio.run(analyze_candidate("CV de Jean", llm=fake_llm, store=store))
+    second = asyncio.run(analyze_candidate("CV de Jean, version 2", llm=fake_llm, store=store))
+
+    assert second.id == first.id
+    assert len(store.list_all()) == 1
+
+
+def analysis_json(name: str | None, email: str | None) -> str:
+    return CVAnalysis(
+        candidate_name=name,
+        email=email,
+        key_skills=["Python"],
+        years_of_experience=3,
+        education_level=None,
+        match_score=50,
+        score_justifications=["Profil moyen."],
+        red_flags=[],
+    ).model_dump_json()
+
+
+def test_shared_email_with_another_name_creates_a_new_candidate(fake_llm: FakeLLMClient) -> None:
+    store = CandidateStore()
+    fake_llm.json_answers = [
+        analysis_json("Alice Martin", "contact@famille.fr"),
+        analysis_json("Bob Martin", "contact@famille.fr"),
+    ]
+
+    alice = asyncio.run(analyze_candidate("CV d'Alice", llm=fake_llm, store=store))
+    bob = asyncio.run(analyze_candidate("CV de Bob", llm=fake_llm, store=store))
+
+    assert bob.id != alice.id
+    assert store.get(alice.id).name == "Alice Martin"
+
+
+@pytest.mark.parametrize("email", [None, "Non renseigné", "   "])
+def test_missing_or_invalid_email_never_merges(fake_llm: FakeLLMClient, email: str | None) -> None:
+    store = CandidateStore()
+    fake_llm.json_answers = [analysis_json("Claire Durand", email), analysis_json("Claire Durand", email)]
+
+    first = asyncio.run(analyze_candidate("CV 1", llm=fake_llm, store=store))
+    second = asyncio.run(analyze_candidate("CV 2", llm=fake_llm, store=store))
+
+    assert first.id != second.id
+    assert first.email is None
+
+
+def test_too_long_name_is_truncated_instead_of_failing(fake_llm: FakeLLMClient) -> None:
+    fake_llm.json_answers = [analysis_json("Jean " + "x" * 300, None)]
+
+    candidate = asyncio.run(analyze_candidate("CV", llm=fake_llm, store=CandidateStore()))
+
+    assert len(candidate.name) == 100
