@@ -1,10 +1,12 @@
 import asyncio
+import base64
+import json
 
 import httpx
 import pytest
 
 from app.llm import gemini
-from app.llm.base import LLMError
+from app.llm.base import LLMError, Message, Role, ToolCall, ToolDefinition, ToolResult
 from app.llm.gemini import GeminiClient
 
 GEMINI_OK_RESPONSE = {"candidates": [{"content": {"role": "model", "parts": [{"text": "ok"}]}}]}
@@ -68,3 +70,89 @@ def test_network_error_becomes_llm_error(monkeypatch: pytest.MonkeyPatch) -> Non
 
     with pytest.raises(LLMError, match="injoignable"):
         asyncio.run(client.generate("Bonjour"))
+
+
+def recording_server(response: dict[str, object]) -> tuple[httpx.MockTransport, list[dict[str, object]]]:
+    """Simule Gemini : renvoie toujours la même réponse et garde le corps JSON des requêtes."""
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=response)
+
+    return httpx.MockTransport(handler), bodies
+
+
+SEARCH_TOOL = ToolDefinition(
+    name="search_interview_slots",
+    description="Cherche les créneaux.",
+    parameters={"type": "object", "properties": {"date": {"type": "string"}}, "required": ["date"]},
+)
+SIGNATURE = b"opaque-signature"
+FUNCTION_CALL_RESPONSE = {
+    "candidates": [
+        {
+            "content": {
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {"id": "call-1", "name": "search_interview_slots", "args": {"date": "2026-10-15"}},
+                        "thoughtSignature": base64.b64encode(SIGNATURE).decode(),
+                    }
+                ],
+            }
+        }
+    ]
+}
+
+
+def generate_with_tools(transport: httpx.MockTransport, messages: list[Message]) -> Message:
+    client = GeminiClient(api_key="fake-key", model="test-model", transport=transport)
+    return asyncio.run(client.generate_with_tools(messages, system="Agent", tools=[SEARCH_TOOL], temperature=0.0))
+
+
+def test_function_call_becomes_tool_call_with_its_signature() -> None:
+    transport, bodies = recording_server(FUNCTION_CALL_RESPONSE)
+
+    reply = generate_with_tools(transport, [Message(role=Role.USER, content="Créneaux du 15 ?")])
+
+    assert reply.role is Role.ASSISTANT
+    assert reply.tool_calls == [
+        ToolCall(id="call-1", name="search_interview_slots", arguments={"date": "2026-10-15"}, signature=SIGNATURE)
+    ]
+    declaration = bodies[0]["tools"][0]["functionDeclarations"][0]
+    assert declaration["name"] == "search_interview_slots"
+    assert declaration["parameters_json_schema"] == SEARCH_TOOL.parameters
+
+
+def test_history_sends_back_signature_and_tool_result() -> None:
+    transport, bodies = recording_server(GEMINI_OK_RESPONSE)
+    call = ToolCall(id="call-1", name="search_interview_slots", arguments={"date": "2026-10-15"}, signature=SIGNATURE)
+    history = [
+        Message(role=Role.USER, content="Créneaux du 15 ?"),
+        Message(role=Role.ASSISTANT, tool_calls=[call]),
+        Message(
+            role=Role.TOOL,
+            tool_results=[ToolResult(call_id="call-1", name="search_interview_slots", content=["09:00"])],
+        ),
+    ]
+
+    reply = generate_with_tools(transport, history)
+
+    assert reply == Message(role=Role.ASSISTANT, content="ok")
+    contents = bodies[0]["contents"]
+    assert [content["role"] for content in contents] == ["user", "model", "user"]
+    assert contents[1]["parts"][0]["thoughtSignature"] == base64.b64encode(SIGNATURE).decode()
+    assert contents[2]["parts"][0]["functionResponse"] == {
+        "id": "call-1",
+        "name": "search_interview_slots",
+        # Gemini attend un objet : la liste est enveloppée
+        "response": {"result": ["09:00"]},
+    }
+
+
+def test_empty_tool_reply_becomes_llm_error() -> None:
+    transport, _ = recording_server({"candidates": [{"content": {"role": "model", "parts": []}}]})
+
+    with pytest.raises(LLMError, match="vide"):
+        generate_with_tools(transport, [Message(role=Role.USER, content="Bonjour")])
