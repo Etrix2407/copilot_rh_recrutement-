@@ -3,10 +3,9 @@
 Les descriptions des champs servent de consignes au LLM.
 """
 
+import re
 from enum import StrEnum
 from typing import Annotated
-
-import re
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
@@ -21,8 +20,10 @@ class EducationLevel(StrEnum):
     OTHER = "autre"
 
 
-# Forme minimale d'un email ; le reste (« Non renseigné », vide…) est traité comme absent
-_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Forme minimale d'un email, partagée par l'analyse des CVs et les arguments de l'agent ;
+# le reste (« Non renseigné », vide…) est traité comme absent
+EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+_EMAIL = re.compile(EMAIL_PATTERN)
 
 # Texte non vide (les espaces autour sont retirés)
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -41,6 +42,8 @@ class CVAnalysis(BaseModel):
     )
     years_of_experience: float | None = Field(
         ge=0,
+        le=80,
+        allow_inf_nan=False,
         description="Années d'expérience professionnelle, null si impossible à déterminer.",
     )
     education_level: EducationLevel | None = Field(
