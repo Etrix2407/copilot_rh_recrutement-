@@ -11,12 +11,13 @@ from chromadb.config import Settings as ChromaSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import candidates, health, interviews, rag
+from app.api import agent, candidates, health, interviews, rag
 from app.config import Settings, get_settings
 from app.data.hr_policies import HR_POLICIES
 from app.llm.base import LLMClient
 from app.llm.factory import create_llm_client
 from app.logging_config import configure_logging
+from app.services.agent_chat import ConversationStore
 from app.services.candidate_store import CandidateStore
 from app.services.policy_index import PolicyIndex, create_embedding_function
 
@@ -29,6 +30,7 @@ class AppState(TypedDict):
     llm_client: LLMClient
     candidate_store: CandidateStore
     policy_index: PolicyIndex
+    conversation_store: ConversationStore
 
 
 def create_app(
@@ -50,7 +52,12 @@ def create_app(
         llm_client = create_llm_client(settings)
         policy_index = build_policy_index(settings, embedding_function)
         logger.info("API démarrée (LLM : %s / %s)", settings.llm_provider, settings.llm_model)
-        yield {"llm_client": llm_client, "candidate_store": CandidateStore(), "policy_index": policy_index}
+        yield {
+            "llm_client": llm_client,
+            "candidate_store": CandidateStore(),
+            "policy_index": policy_index,
+            "conversation_store": ConversationStore(),
+        }
         await llm_client.aclose()
 
     app = FastAPI(title="Copilot RH Recrutement", lifespan=lifespan)
@@ -64,6 +71,7 @@ def create_app(
     app.include_router(candidates.router)
     app.include_router(rag.router)
     app.include_router(interviews.router)
+    app.include_router(agent.router)
     return app
 
 

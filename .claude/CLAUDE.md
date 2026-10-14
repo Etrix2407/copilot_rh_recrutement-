@@ -32,7 +32,7 @@ Documents de référence :
 - Embeddings : fonction d'embedding par défaut de ChromaDB (`all-MiniLM-L6-v2`, locale, sans clé ni coût). Le modèle est lu depuis `.env` (`EMBEDDING_MODEL`) ; si le test officiel RAG échoue sur le français, passer à `paraphrase-multilingual-MiniLM-L12-v2`.
 - Base vectorielle : ChromaDB
 - PDF : pdfplumber
-- SSE : sse-starlette
+- SSE : natif FastAPI (`fastapi.sse.EventSourceResponse`, sans dépendance en plus)
 - Tests : pytest + httpx2 (pour le `TestClient`)
 
 ## Règles de code
@@ -83,12 +83,12 @@ app/
   main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (état de lifespan)
   config.py        # Settings (pydantic-settings) lus depuis .env
   logging_config.py
-  api/             # routes FastAPI (health.py, candidates.py, rag.py…) ; dependencies.py donne un accès typé à request.state
+  api/             # routes FastAPI (health.py, candidates.py, rag.py, interviews.py, agent.py…) ; dependencies.py donne un accès typé à request.state
   llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
   data/            # données du cahier des charges, contenu identique, noms traduits
-  models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py…)
+  models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py, agent.py…)
   services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py,
-                   #   structured_output.py, policy_index.py, hr_assistant.py, agent.py…)
+                   #   structured_output.py, policy_index.py, hr_assistant.py, agent.py, agent_chat.py…)
   tools/           # outils de l'agent (interviews.py, candidates.py) et leur description pour le LLM (definitions.py)
 scripts/
   check_llm.py     # appel réel au LLM : python -m scripts.check_llm
