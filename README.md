@@ -20,18 +20,19 @@ Une interface web simple réunit les quatre fonctions. Le [scénario de démo](d
 # Windows PowerShell, depuis la racine du projet
 python -m venv venv
 venv\Scripts\Activate.ps1
-pip install -r requirements.txt       # application seule
-pip install -r requirements-dev.txt   # application + outils de test
+pip install -r requirements-dev.txt   # application + outils de test (recommandé)
 ```
 
-Sous Linux ou macOS, activez le venv avec `source venv/bin/activate`.
+Pour l'application seule, sans les outils de test : `pip install -r requirements.txt` (au lieu de la commande précédente).
+
+Sous Linux ou macOS : `source venv/bin/activate` pour activer le venv.
 
 ## Configuration
 
 Copiez le modèle de configuration, puis remplissez-le :
 
 ```powershell
-copy .env.example .env
+copy .env.example .env    # Windows ; sous Linux ou macOS : cp .env.example .env
 ```
 
 | Variable | Rôle |
@@ -48,7 +49,7 @@ copy .env.example .env
 | `ALLOWED_HOSTS` | Noms d'hôte acceptés, au format JSON (`["localhost", "127.0.0.1"]` par défaut) |
 | `DEMO_DATE` | Date du jour donnée à l'agent (`AAAA-MM-JJ`), vide pour la vraie date. L'agenda du cahier ne contient que les 15 et 16/10/2026 : pour une démo plus tard, mettre `2026-10-14` |
 
-Le fichier `.env` contient votre clé : il est ignoré par Git, ne le committez jamais.
+Le fichier `.env` contient votre clé : il est ignoré par Git, ne le committez jamais. Il n'est lu qu'au démarrage : après une modification, redémarrez le serveur. S'il manque une variable, le serveur s'arrête avec un message qui la nomme (« Configuration incomplète : LLM_MODEL (manquante) »).
 
 ## Lancement
 
@@ -61,8 +62,10 @@ Le fichier `.env` contient votre clé : il est ignoré par Git, ne le committez 
 2. Démarrez l'API :
 
    ```powershell
-   uvicorn app.main:create_app --factory --reload
+   uvicorn app.main:create_app --factory --reload --no-proxy-headers
    ```
+
+   `--no-proxy-headers` : sans proxy devant l'application, l'en-tête `X-Forwarded-For` est ignoré, sinon un client pourrait changer d'adresse apparente pour contourner la limite de requêtes.
 
 3. Ouvrez l'interface : <http://localhost:8000/> (documentation de l'API : <http://localhost:8000/docs>)
 
@@ -103,6 +106,8 @@ Pour voir les mots arriver un par un (PowerShell, le message passe par un fichie
 curl.exe -N -X POST http://localhost:8000/api/agent/chat -H "Content-Type: application/json" --data-binary "@chat.json"
 ```
 
+Cet exemple réserve vraiment le créneau de 09:00 dans l'agenda (en mémoire) : relancé, il prend le créneau suivant ; un redémarrage du serveur remet l'agenda à zéro. Jean Dupont doit d'abord avoir été analysé (onglet **Analyser un CV**).
+
 L'agent voit ses outils sous les noms et paramètres du cahier des charges : `rechercher_creneaux_entretien(date)`, `reserver_entretien(candidat_nom, date, heure, email)` et `mettre_a_jour_statut_candidat(candidat, statut)`. Dans le code Python, les fonctions portent des noms anglais (`search_interview_slots`, `book_interview`), avec des docstrings, un comportement et des valeurs de retour identiques au cahier.
 
 ## Architecture
@@ -121,6 +126,7 @@ flowchart LR
     Gemini --> Google[("API Gemini")]
     Services --> Chroma[("ChromaDB<br/>politiques RH")]
     Services --> SQLite[("SQLite<br/>candidats")]
+    Tools --> SQLite
     Tools --> Agenda[("Agenda du recruteur<br/>en mémoire")]
 ```
 
@@ -204,8 +210,8 @@ Le code a fait l'objet d'audits offensifs successifs (pentest, tests destructifs
 - **Fichiers** : 2 Mo et 10 pages au maximum, 30 000 caractères de texte ; l'extraction d'un PDF tourne dans un processus séparé, arrêté au bout de 10 s ou au-delà de 400 Mo de mémoire (protection contre les « bombes » PDF), 2 au maximum en parallèle (au-delà, refus immédiat 503).
 - **Quota** : 10 requêtes déclenchant le LLM par minute et par adresse IP (réglable) ; un texte invalide n'est pas compté, un fichier l'est dès sa réception (sa lecture coûte cher) ; au-delà, une erreur 429 indique quand réessayer.
 - **Requêtes** : hôtes autorisés (contre le « DNS rebinding »), requêtes venant d'un autre site refusées (CSRF, en-têtes `Origin` et `Sec-Fetch-Site`), corps limités à 3 Mo pour l'envoi de CV et 64 Ko ailleurs, que la taille soit annoncée ou non (envoi « chunked »).
-- **Navigateur** : aucune insertion HTML des textes (`textContent` uniquement), en-têtes `Content-Security-Policy` et `X-Content-Type-Options`.
-- **Données personnelles** : ni CV, ni noms, ni emails dans les logs ; erreurs génériques côté client, sans écho des données envoyées ; suppression d'un candidat depuis le tableau (RGPD), qui efface aussi son analyse et les conversations de l'agent qui le mentionnent, avec écrasement des données dans le fichier SQLite (`secure_delete`) ; la base des candidats est ignorée par Git.
+- **Navigateur** : aucune insertion HTML des textes (`textContent` uniquement), en-têtes `Content-Security-Policy`, `X-Content-Type-Options` et `X-Frame-Options` ; réponses de l'API jamais mises en cache (`Cache-Control: no-store`) ; `/docs` et `/redoc` chargent des versions figées de Swagger UI et ReDoc (pas de « dernière version » d'un script tiers).
+- **Données personnelles** : ni CV, ni noms, ni emails dans les logs ; erreurs génériques côté client, sans écho des données envoyées ; suppression d'un candidat depuis le tableau (RGPD), qui efface aussi son analyse et toutes les conversations de l'agent (un nom peut être écrit de mille façons), avec écrasement des données dans le fichier SQLite (`secure_delete`) ; la base des candidats est ignorée par Git.
 
 ## Limites connues
 
@@ -216,21 +222,29 @@ Le projet est une démonstration locale, mono-utilisateur :
 - **Conversations en mémoire** : elles sont perdues au redémarrage ; 100 conversations au maximum, et une conversation de plus de 60 messages n'accepte plus de nouvelle demande. Une conversation n'accepte qu'une réponse à la fois (une seconde demande simultanée reçoit 409) ; cette réservation expire après 120 s, au-delà desquelles un tour très long pourrait chevaucher le suivant (un tour réel dure 3 à 11 s).
 - **Un seul worker** : l'agenda et les limites de débit sont propres au processus.
 - **Invitations simulées** : `book_interview` annonce l'envoi de l'invitation, sans envoyer d'email.
+- **Offre gratuite de Gemini** : selon les conditions de Google, les données envoyées avec une clé gratuite peuvent servir à améliorer ses produits. Pour de vrais CVs, utiliser une clé payante (ou un autre fournisseur via un nouvel adaptateur) ; la démo n'utilise que des CVs fictifs.
+- **Quota gratuit** : nombre de requêtes limité par minute et par jour ; une fois le quota du jour atteint, le LLM répond par une erreur jusqu'au lendemain.
 
 ## Structure
 
 ```
 app/
-  api/        # routes FastAPI, format d'erreur commun, limitation du débit
-  llm/        # port LLM et adaptateur Gemini
-  data/       # données du cahier des charges (contenu inchangé)
-  models/     # schémas Pydantic
-  prompts/    # prompts système des services LLM (fichiers texte)
-  services/   # logique métier (parsing, RAG, agent, stockage)
-  tools/      # outils de l'agent
-  security.py # en-têtes de sécurité et protection CSRF
-frontend/     # interface web (HTML, CSS, JS)
-scripts/      # check_llm (appel réel au LLM), evaluate (rapport des résultats)
-tests/        # tests pytest (faux LLM par défaut, vrai LLM avec -m llm)
-docs/         # cahier des charges, plan de développement, scénario de démo
+  main.py            # create_app() : logs, middlewares, routes, objets partagés (lifespan)
+  config.py          # configuration lue depuis .env (pydantic-settings)
+  logging_config.py  # format des logs
+  messages.py        # messages destinés à l'utilisateur, partagés par routes et services
+  security.py        # hôtes autorisés, CSRF, taille des corps, en-têtes de sécurité
+  api/               # routes FastAPI, format d'erreur commun, limitation du débit, /docs (versions figées)
+  llm/               # port LLM et adaptateur Gemini
+  data/              # données du cahier des charges (contenu inchangé)
+  models/            # schémas Pydantic
+  prompts/           # prompts système des services LLM (fichiers texte)
+  services/          # logique métier (parsing, RAG, agent, stockage, RGPD)
+  tools/             # outils de l'agent et leur description pour le LLM
+frontend/            # interface web (HTML, CSS, JS sans build)
+scripts/             # check_llm (appel réel au LLM), evaluate (rapport des résultats)
+tests/               # tests pytest (faux LLM par défaut, vrai LLM avec -m llm)
+  frontend/          # tests de l'interface (node:test)
+docs/                # cahier des charges, plan de développement, scénario de démo, rapport d'audit
+.github/workflows/   # intégration continue : ruff, pytest, tests de l'interface
 ```

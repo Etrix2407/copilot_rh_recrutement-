@@ -38,7 +38,7 @@ Chaque constat ci-dessous a été reproduit puis corrigé. Les corrections du se
 | PDF malformés renvoyant une erreur 500. | Toute erreur d'extraction donne un message clair (422). |
 | Les requêtes invalides consommaient la limite de débit : quota épuisable sans aucun appel au LLM. | La limite n'est comptée qu'une fois la demande validée. |
 | Protection CSRF fondée sur l'en-tête `Host`, falsifiable (« DNS rebinding »). | Liste d'hôtes autorisés ; `Sec-Fetch-Site: cross-site` refusé même sans `Origin`. |
-| Corps de requête JSON non limités ; erreurs 422 renvoyant toute l'entrée, en double pour le chat. | Corps limités (64 Ko en JSON, 3 Mo sinon) ; erreurs sans écho des données ; validation unique. |
+| Corps de requête JSON non limités ; erreurs 422 renvoyant toute l'entrée, en double pour le chat. | Corps limités (64 Ko en JSON, 3 Mo sinon ; depuis, la limite dépend de la route : 3 Mo pour l’envoi de CV, 64 Ko ailleurs) ; erreurs sans écho des données ; validation unique. |
 | Interface : conversation expirée bloquée, question envoyée en double, flux coupé sans message. | Conversation réinitialisée sur 404, envois en double bloqués, coupure signalée et cartes d'outil clôturées. |
 
 ### Conformité et qualité
@@ -88,6 +88,22 @@ Quatre derniers agents auditeurs ont repris la version fusionnée sur `main` : p
 | Nettoyage `as_data` quadratique (1,3 s sur un CV piégé) et balises à attributs non neutralisées. | Chevrons neutralisés en un seul passage linéaire (2 ms). |
 | Envoi de fichier invalide comptant dans la limite de débit. | Format et « fichier ou texte » vérifiés avant le comptage. |
 | Qualité : code dupliqué, route avec logique, tests sans comparaison au cahier, pas de lint. | Factorisation, service `interviews`, docstrings et comportement des outils comparés au code du cahier, `ruff` en intégration continue. |
+
+## Audit complet
+
+Cinquième ronde, sur `main` (d0b89cc) : pentest, logique, qualité, accessibilité et documentation. Aucun constat critique. Les points de l'agent sont détaillés dans la pull request de cette ronde.
+
+| Constat | Correction |
+| --- | --- |
+| **Contournement de la CSP** : `/docs%2f..%2findex.html` commençait par `/docs`, donc la page était servie sans CSP. | Comparaison exacte du chemin (`/docs`, `/redoc`). En plus : `X-Frame-Options`, `base-uri` et `form-action` dans la CSP, `Cache-Control: no-store` sur l'API. |
+| Swagger UI chargé depuis un CDN dans sa « dernière version 5.x ». | Versions de Swagger UI et ReDoc figées (`app/api/docs.py`). |
+| Contournement de la limite de débit par `X-Forwarded-For` (uvicorn fait confiance à 127.0.0.1). | Commandes de lancement avec `--no-proxy-headers`. |
+| Processus enfant d'un PDF piégé encore vivant 49 s après l'arrêt brutal du serveur. | Minuterie dans le processus enfant : arrêt en 9 s au plus (mesuré). |
+| La réponse 404 renvoyait l'identifiant reçu (écho, réponse démesurée). | Message fixe « Candidat introuvable. ». |
+| Configuration incomplète : trace Python illisible au démarrage. | Message en français qui nomme les variables en cause, sans leur valeur. |
+| CI : jeton GitHub avec les droits par défaut, laissé dans `.git/config`. | `permissions: contents: read`, `persist-credentials: false`. |
+| Interface : aucun retour pendant la réflexion de l'agent, contrastes du focus et des bordures insuffisants (2,6:1), tableau illisible sur mobile. | Bulle « L'assistant réfléchit… », annonces vocales, contrastes WCAG (≥ 3:1 pour les bordures et le focus), cartes sur mobile, contrôles de fichier côté navigateur, synthèse du tableau. |
+| Documentation : `DEMO_DATE` à régler après le démarrage, structure incomplète, usage des données par l'offre gratuite de Gemini non signalé. | Scénario réordonné, dépannage au démarrage, README complété (structure, Linux, limites). |
 
 ## Limites assumées
 
