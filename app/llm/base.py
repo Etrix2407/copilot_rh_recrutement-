@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,6 +23,17 @@ class Message(BaseModel):
 
     role: Role
     content: str
+
+
+class ToolDefinition(BaseModel):
+    """Description d'un outil pour le LLM, indépendante du fournisseur."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    description: str
+    # Paramètres au format JSON Schema (type « object »)
+    parameters: dict[str, Any]
 
 
 class LLMClient(Protocol):
