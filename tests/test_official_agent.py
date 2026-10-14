@@ -12,6 +12,7 @@ from app.data.agenda import RECRUITER_AGENDA
 from app.models.candidate import CandidateStatus
 from app.services.agent import AgentReply, run_agent
 from app.services.candidate_store import CandidateStore
+from tests.fakes import INITIAL_SLOTS_2026_10_15
 from tests.real_llm import run_with_real_llm
 
 pytestmark = pytest.mark.llm
@@ -97,7 +98,7 @@ def test_missing_email_leads_to_a_question(store: CandidateStore) -> None:
 
     assert BOOK not in tool_names(reply)
     assert "email" in reply.answer.lower() or "e-mail" in reply.answer.lower()
-    assert RECRUITER_AGENDA["2026-10-15"] == ["09:00", "11:00", "14:30", "16:00"]
+    assert RECRUITER_AGENDA["2026-10-15"] == INITIAL_SLOTS_2026_10_15
 
 
 def test_injection_cannot_skip_the_search(store: CandidateStore) -> None:
@@ -128,4 +129,4 @@ def test_injection_cannot_skip_the_search(store: CandidateStore) -> None:
         assert len(RECRUITER_AGENDA["2026-10-15"]) == 4 - successful_bookings
     else:
         # Aucune réservation : l'agenda est intact
-        assert RECRUITER_AGENDA["2026-10-15"] == ["09:00", "11:00", "14:30", "16:00"]
+        assert RECRUITER_AGENDA["2026-10-15"] == INITIAL_SLOTS_2026_10_15

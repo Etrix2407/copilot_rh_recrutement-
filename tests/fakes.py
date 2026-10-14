@@ -1,5 +1,7 @@
-"""Doublures de test partagées : faux client LLM, faux embedding et générateur de PDF."""
+"""Doublures de test partagées : faux client LLM, faux embedding, générateur de PDF, lecture SSE et agenda initial."""
 
+import copy
+import json
 import re
 import zlib
 from collections.abc import AsyncIterator, Sequence
@@ -9,7 +11,13 @@ import numpy as np
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from pydantic import BaseModel
 
+from app.data.agenda import RECRUITER_AGENDA
 from app.llm.base import LLMError, Message, ToolDefinition
+
+# Copie de l'agenda du recruteur prise à l'import, avant tout test : référence pour vérifier qu'il est intact
+INITIAL_AGENDA: dict[str, list[str]] = copy.deepcopy(RECRUITER_AGENDA)
+# Créneaux initiaux du 2026-10-15, la date des tests officiels (à comparer, jamais à modifier)
+INITIAL_SLOTS_2026_10_15: list[str] = INITIAL_AGENDA["2026-10-15"]
 
 
 class FakeEmbeddingFunction(EmbeddingFunction[Documents]):
@@ -125,3 +133,13 @@ def build_pdf(text: str) -> bytes:
     pdf += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
     pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref_offset)
     return pdf
+
+
+def parse_sse(body: str) -> list[tuple[str, dict[str, object]]]:
+    """Renvoie les événements (nom, données) d'un flux SSE, sans les commentaires de maintien."""
+    events = []
+    for block in body.strip().split("\n\n"):
+        fields = dict(line.split(": ", 1) for line in block.splitlines() if not line.startswith(":"))
+        if fields:
+            events.append((fields["event"], json.loads(fields["data"])))
+    return events
