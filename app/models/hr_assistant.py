@@ -32,10 +32,12 @@ class HRAnswerDraft(BaseModel):
         description="true uniquement si les extraits fournis contiennent explicitement la réponse, sinon false."
     )
     answer: str = Field(
-        description="Réponse factuelle en français, fondée uniquement sur les extraits. Chaîne vide si answered vaut false."
+        description="Réponse factuelle en français, fondée uniquement sur les extraits. "
+        "Chaîne vide si answered vaut false."
     )
     source_ids: list[str] = Field(
-        description="Identifiants (rh_doc_xx) des extraits réellement utilisés pour répondre. Liste vide si answered vaut false."
+        description="Identifiants (rh_doc_xx) des extraits réellement utilisés pour répondre. "
+        "Liste vide si answered vaut false."
     )
 
 

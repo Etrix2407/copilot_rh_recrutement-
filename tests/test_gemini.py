@@ -117,7 +117,11 @@ FUNCTION_CALL_CHUNK = {
                 "role": "model",
                 "parts": [
                     {
-                        "functionCall": {"id": "call-1", "name": "search_interview_slots", "args": {"date": "2026-10-15"}},
+                        "functionCall": {
+                            "id": "call-1",
+                            "name": "search_interview_slots",
+                            "args": {"date": "2026-10-15"},
+                        },
                         "thoughtSignature": base64.b64encode(SIGNATURE).decode(),
                     }
                 ],
@@ -215,7 +219,7 @@ def test_generate_json_sends_system_temperature_and_schema() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         bodies.append(json.loads(request.content))
-        return httpx.Response(200, json={"candidates": [{"content": {"role": "model", "parts": [{"text": '{"value": 1}'}]}}]})
+        return httpx.Response(200, json=text_chunk('{"value": 1}'))
 
     answer = run_with_client(
         httpx.MockTransport(handler),
@@ -236,7 +240,8 @@ def test_generate_json_sends_system_temperature_and_schema() -> None:
 
 
 def test_thought_parts_are_not_streamed() -> None:
-    thought_chunk = {"candidates": [{"content": {"role": "model", "parts": [{"text": "Je réfléchis…", "thought": True}]}}]}
+    thought_part = {"text": "Je réfléchis…", "thought": True}
+    thought_chunk = {"candidates": [{"content": {"role": "model", "parts": [thought_part]}}]}
     transport, _ = streaming_server([thought_chunk, text_chunk("Voici les créneaux.")])
 
     items = stream_with_tools(transport, [Message(role=Role.USER, content="Créneaux ?")])

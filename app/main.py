@@ -61,9 +61,10 @@ def create_app(
         # Créés une seule fois au démarrage ; Starlette les copie dans request.state à chaque requête
         llm_client = create_llm_client(settings)
         candidate_store = CandidateStore(settings.database_path)
-        policy_index = build_policy_index(settings, embedding_function)
-        logger.info("API démarrée (LLM : %s / %s)", settings.llm_provider, settings.llm_model)
         try:
+            # Dans le try : si l'indexation échoue, le client LLM et la base sont quand même fermés
+            policy_index = build_policy_index(settings, embedding_function)
+            logger.info("API démarrée (LLM : %s / %s)", settings.llm_provider, settings.llm_model)
             yield {
                 "llm_client": llm_client,
                 "candidate_store": candidate_store,
@@ -73,7 +74,7 @@ def create_app(
                 "settings": settings,
             }
         finally:
-            # Fermeture garantie, même si l'arrêt fait suite à une erreur
+            # Fermeture garantie, même après une erreur au démarrage ou pendant le fonctionnement
             await llm_client.aclose()
             candidate_store.close()
 

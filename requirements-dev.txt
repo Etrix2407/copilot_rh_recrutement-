@@ -7,3 +7,6 @@ numpy>=1.26,<3
 pytest==9.1.1
 # Client HTTP du TestClient de Starlette (remplace httpx, déprécié pour cet usage)
 httpx2==2.13.1
+
+# Qualité du code : lint (règles dans pyproject.toml), lancé aussi par l'intégration continue
+ruff==0.14.0

@@ -1,6 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.fakes import INITIAL_SLOTS_2026_10_15
+
 SLOTS_URL = "/api/interviews/slots"
 
 
@@ -13,7 +15,7 @@ def test_returns_free_slots_for_existing_candidate(client: TestClient, candidate
     response = client.get(SLOTS_URL, params={"candidate_id": candidate_id, "date": "2026-10-15"})
 
     assert response.status_code == 200
-    assert response.json() == {"date": "2026-10-15", "slots": ["09:00", "11:00", "14:30", "16:00"]}
+    assert response.json() == {"date": "2026-10-15", "slots": INITIAL_SLOTS_2026_10_15}
 
 
 def test_returns_empty_list_for_date_without_slots(client: TestClient, candidate_id: str) -> None:

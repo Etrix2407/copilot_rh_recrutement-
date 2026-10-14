@@ -1,3 +1,9 @@
+[project]
+name = "copilot-rh-recrutement"
+version = "1.0.0"
+description = "Plateforme RH avec assistant de recrutement (parsing de CV, RAG, agent, chat en streaming)"
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
 # Permet aux tests d'importer le paquet app depuis la racine
 pythonpath = ["."]
@@ -7,3 +13,18 @@ addopts = "-m 'not llm'"
 markers = [
     "llm: appelle le vrai LLM configuré dans .env (réseau et quota)",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+# Outils de l'assistant de développement, pas du code du projet
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+# Erreurs, imports inutilisés ou mal triés, pièges courants, syntaxe moderne
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Données et outils repris mot pour mot du cahier des charges : leurs lignes ne sont pas recoupées
+"app/data/*" = ["E501"]
+"app/tools/interviews.py" = ["E501"]

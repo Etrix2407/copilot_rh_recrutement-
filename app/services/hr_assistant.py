@@ -21,7 +21,8 @@ SYSTEM_PROMPT = load_prompt("hr_assistant")
 
 def build_prompt(question: str, excerpts: list[PolicyExcerpt]) -> str:
     context = "\n\n".join(f"[{excerpt.id}] {excerpt.title}\n{excerpt.text}" for excerpt in excerpts)
-    return f"Extraits des politiques internes :\n\n{context}\n\nQuestion du collaborateur :\n{as_data('question', question)}"
+    question_block = as_data("question", question)
+    return f"Extraits des politiques internes :\n\n{context}\n\nQuestion du collaborateur :\n{question_block}"
 
 
 async def ask_hr_policies(question: str, *, llm: LLMClient, index: PolicyIndex) -> HRAnswer:

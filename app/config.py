@@ -7,7 +7,6 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 # Modèle d'embedding fourni par ChromaDB, sans dépendance supplémentaire
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 

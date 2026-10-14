@@ -13,7 +13,10 @@ from tests.fakes import FakeEmbeddingFunction
     [
         ({"json": {}}, "Champ « question » : champ obligatoire."),
         ({"json": {"question": "x" * 1001}}, "Champ « question » : 1000 caractères maximum."),
-        ({"content": "{", "headers": {"Content-Type": "application/json"}}, "Le corps de la requête n'est pas un JSON valide."),
+        (
+            {"content": "{", "headers": {"Content-Type": "application/json"}},
+            "Le corps de la requête n'est pas un JSON valide.",
+        ),
     ],
     ids=["manquant", "trop_long", "json_invalide"],
 )
