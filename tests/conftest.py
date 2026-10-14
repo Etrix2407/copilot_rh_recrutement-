@@ -1,3 +1,4 @@
+import copy
 import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_llm_client
 from app.config import Settings
+from app.data.agenda import RECRUITER_AGENDA
 from app.main import create_app
 from app.services.policy_index import PolicyIndex
 from tests.fakes import FakeEmbeddingFunction, FakeLLMClient, build_pdf
@@ -25,6 +27,16 @@ def test_settings(tmp_path: Path) -> Settings:
         chroma_path=str(tmp_path / "chroma"),
         _env_file=None,
     )
+
+
+@pytest.fixture
+def restore_agenda() -> Iterator[None]:
+    """Remet l'agenda du recruteur à son état initial après un test qui réserve un créneau."""
+    initial = copy.deepcopy(RECRUITER_AGENDA)
+    yield
+    # Modification en place : les outils gardent une référence vers ce même dictionnaire
+    RECRUITER_AGENDA.clear()
+    RECRUITER_AGENDA.update(initial)
 
 
 @pytest.fixture

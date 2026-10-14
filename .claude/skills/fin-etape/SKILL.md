@@ -36,7 +36,7 @@ Ne coche jamais un critère sur la seule base du code écrit. Si un des 3 tests 
 Sur `git diff` depuis le début de l'étape (ou `git diff main...HEAD` + modifications non commitées) :
 
 - Données du cahier des charges (POLITIQUES_RH, OFFRE_POSTE_DEV_PYTHON, CANDIDAT_EXEMPLE_1/2, AGENDA_RECRUTEUR) : inchangées par rapport à `docs/cahier_des_charges.md`.
-- `rechercher_creneaux_entretien` et `reserver_entretien` : nom, paramètres et docstrings intacts.
+- `search_interview_slots` et `book_interview` (noms traduits de `rechercher_creneaux_entretien` et `reserver_entretien`) : docstrings, comportement et valeurs de retour identiques au cahier des charges.
 - Aucune clé API ni secret dans le diff ; `.env` toujours ignoré par Git.
 - Aucun log qui écrit le contenu complet d'un CV.
 - Selon l'étape : parsing à température 0.0 + validation Pydantic + 2 appels max (1 appel + 1 relance) ; refus RAG formulé « la politique interne ne précise pas ce point » ; agent qui recherche avant de réserver.
