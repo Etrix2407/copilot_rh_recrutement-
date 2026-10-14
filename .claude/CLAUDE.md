@@ -60,7 +60,7 @@ Documents de référence :
 # Windows PowerShell
 venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt   # dépendances de l'application + des tests
-uvicorn app.main:create_app --factory --reload    # interface → http://localhost:8000/ ; API → /docs
+uvicorn app.main:create_app --factory --reload --no-proxy-headers    # interface → http://localhost:8000/ ; API → /docs
 python -m scripts.check_llm      # vérifie l'appel réel au LLM
 pytest                           # tests rapides, sans réseau (faux LLM)
 pytest -m llm                    # tests officiels avec le vrai LLM (consomme du quota)
@@ -87,15 +87,16 @@ app/
   main.py          # create_app() : logs, CORS, routes ; objets partagés créés au démarrage (état de lifespan)
   config.py        # Settings (pydantic-settings) lus depuis .env
   logging_config.py
-  api/             # routes FastAPI (health.py, candidates.py, rag.py, interviews.py, agent.py…) ; dependencies.py donne un accès typé à request.state ;
+  api/             # routes FastAPI (health.py, candidates.py, rag.py, interviews.py, agent.py, docs.py (Swagger/ReDoc figés)…) ; dependencies.py donne un accès typé à request.state ;
                    #   errors.py (format d'erreur commun), rate_limit.py (appels au LLM par minute et par IP)
   llm/             # port LLM (base.py), adaptateurs (gemini.py), choix de l'adaptateur (factory.py)
   data/            # données du cahier des charges, contenu identique, noms traduits
   prompts/         # prompts système (cv_parser.txt, hr_assistant.txt, agent.txt), chargés par load_prompt
-  models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py, agent.py…)
+  models/          # schémas Pydantic (candidate.py, cv_analysis.py, hr_assistant.py, interview.py, agent.py…)
   services/        # logique métier, sans FastAPI (candidate_store.py, cv_reader.py, cv_parser.py,
                    #   structured_output.py, policy_index.py, hr_assistant.py, agent.py (boucle), agent_tools.py (outils et
-                   #   garde-fous), agent_chat.py (conversations, SSE), privacy.py (effacement RGPD), prompt_safety.py…)
+                   #   garde-fous), agent_chat.py (conversations, SSE), privacy.py (effacement RGPD), prompt_safety.py, interviews.py (créneaux libres pour l'API),
+                   #   text.py (normalisation des noms)…)
   security.py      # hôtes autorisés, CSRF, taille des corps, en-têtes de sécurité (middleware ASGI pur, compatible SSE)
   messages.py      # messages destinés à l'utilisateur partagés par routes et services (LLM_UNAVAILABLE)
   tools/           # outils de l'agent (interviews.py, candidates.py) et leur description pour le LLM (definitions.py)
@@ -109,6 +110,7 @@ tests/             # pytest ; conftest.py fournit test_settings, fake_llm, polic
   fakes.py         # FakeLLMClient (réponses prévues), FakeEmbeddingFunction et build_pdf
   real_llm.py      # run_with_real_llm : appel au vrai LLM dans les tests -m llm
   fixtures/cvs/    # CVs atypiques fictifs pour les tests de robustesse (-m llm), dont un CV piégé (injection)
+  frontend/        # tests de l'interface (node --test "tests/frontend/*.test.mjs")
   fixtures/rag_trap_questions.txt  # questions pièges du RAG, partagées par les tests et scripts/evaluate.py
 ```
 
@@ -120,7 +122,7 @@ IMPORTANT :
 - **Ne pas changer** le comportement, les docstrings ni les valeurs de retour de `search_interview_slots` et `book_interview` (seuls les noms sont traduits).
 - Refus du RAG : la réponse doit dire que **la politique interne ne précise pas ce point**.
 - Parsing : température 0.0, sortie validée par Pydantic, 2 appels maximum (1 appel + 1 relance si la réponse est invalide).
-- Agent : toujours `rechercher_creneaux_entretien` avant `reserver_entretien` (garanti par le code, dans `app/services/agent.py`).
+- Agent : toujours `rechercher_creneaux_entretien` avant `reserver_entretien` (garanti par le code, dans `app/services/agent_tools.py`).
 - Clés API uniquement dans `.env`, jamais dans le code ni dans Git.
 - Ne pas journaliser le contenu complet des CVs.
 

@@ -101,7 +101,8 @@ def _extract_pdf_text(content: bytes) -> str:
     try:
         receiver, sender = context.Pipe(duplex=False)
         process = context.Process(
-            target=_extract_in_child, args=(content, MAX_PDF_PAGES, PDF_MAX_MEMORY_BYTES, sender), daemon=True
+            target=_extract_in_child, args=(content, MAX_PDF_PAGES, PDF_MAX_MEMORY_BYTES, PDF_TIMEOUT_SECONDS, sender),
+            daemon=True,
         )
         process.start()
         sender.close()
@@ -123,8 +124,15 @@ def _extract_pdf_text(content: bytes) -> str:
     return value
 
 
-def _extract_in_child(content: bytes, max_pages: int, max_memory: int, sender: Connection) -> None:
+def _extract_in_child(
+    content: bytes, max_pages: int, max_memory: int, timeout: float, sender: Connection
+) -> None:
     """Exécuté dans le processus séparé : renvoie (True, texte) ou (False, message d'erreur)."""
+    # Délai propre au processus : il s'arrête de lui-même, même si le serveur qui l'a lancé
+    # a été tué brutalement et ne peut plus l'arrêter (marge d'une seconde sur le délai du parent)
+    watchdog = threading.Timer(timeout + 1, os._exit, args=(1,))
+    watchdog.daemon = True
+    watchdog.start()
     _limit_child_memory(max_memory)
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:

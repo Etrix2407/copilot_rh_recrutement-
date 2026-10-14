@@ -11,6 +11,12 @@ const SLOW = { wordMs: 10_000, toolCardMs: 10_000 };
 
 const idle = (page) => waitFor(() => !page.busy(), { message: "le bouton Envoyer n'est pas réactivé" });
 
+// Attend que le premier élément de la réponse (mot ou carte d'outil) remplace la bulle « réfléchit »
+const firstShown = (page) => waitFor(
+  () => page.items().length === 2 && !page.items()[1].className.includes("thinking"),
+  { message: "rien ne s'affiche après la bulle « réfléchit »" },
+);
+
 test("une erreur seule, file vide, s'affiche et réactive Envoyer (gel corrigé)", async () => {
   const page = await loadChat();
   page.submit("bonjour");
@@ -40,10 +46,10 @@ test("ordre d'affichage : carte d'outil, résultat, mots, puis annonce", async (
   server.push(sse("done", { conversation_id: "c1", answer: "Deux créneaux." }));
   server.close();
 
-  // Pendant la pause de la carte : outil « en cours », pas encore de mots ni d'annonce
-  await waitFor(() => page.items().length === 2);
+  // Pendant la pause de la carte : outil « en cours », pas encore de mots ; seul le début est annoncé
+  await firstShown(page);
   assert.deepEqual(page.items()[1], { className: "tool-card", text: "🔧 Recherche de créneaux…" });
-  assert.equal(page.$["chat-announcer"].textContent, "");
+  assert.equal(page.$["chat-announcer"].textContent, "Recherche en cours…");
 
   await idle(page);
   assert.deepEqual(page.items(), [
@@ -64,7 +70,7 @@ test("Arrêter pendant le flux : tout ce qui est reçu s'affiche aussitôt, rés
   server.push(sse("tool_result", { name: "reserver_entretien", success: true, summary: "Réservé le 2026-10-15" }));
   server.push(sse("tool_start", { name: "mettre_a_jour_statut_candidat" }));
   // Le premier mot est affiché, le reste attend derrière une pause de 10 s
-  await waitFor(() => page.items().length === 2);
+  await firstShown(page);
 
   page.$["chat-stop"].click();
   await idle(page);
@@ -89,7 +95,7 @@ for (const closed of [true, false]) {
     for (const word of words) server.push(sse("token", { text: word }));
     server.push(sse("done", { conversation_id: "c1", answer: words.join("") }));
     if (closed) server.close();
-    await waitFor(() => page.items().length === 2);
+    await firstShown(page);
 
     page.$["chat-stop"].click();
     await idle(page);
@@ -144,7 +150,7 @@ test("coupure réseau en plein flux : message français, pas celui du navigateur
   const server = page.net.servers[0];
   server.push(sse("start", { conversation_id: "c1" }));
   server.push(sse("token", { text: "Bon" }));
-  await waitFor(() => page.items().length === 2);
+  await firstShown(page);
   server.fail(new TypeError("network error"));
 
   await idle(page);
@@ -164,7 +170,7 @@ for (const finished of [false, true]) {
       server.push(sse("done", { conversation_id: "c1", answer: "un deux trois" }));
       server.close();
     }
-    await waitFor(() => page.items().length === 2);
+    await firstShown(page);
 
     page.$["chat-reset"].click();
     assert.deepEqual(page.items(), []);
@@ -191,3 +197,102 @@ for (const finished of [false, true]) {
     ]);
   });
 }
+
+test("bulle « L'assistant réfléchit… » dès l'envoi, retirée au premier mot", async () => {
+  const page = await loadChat();
+  page.submit("bonjour");
+  assert.deepEqual(page.items(), [
+    { className: "message user", text: "Vousbonjour" },
+    { className: "message assistant thinking", text: "AssistantL'assistant réfléchit…" },
+  ]);
+  assert.equal(page.$["chat-announcer"].textContent, "Recherche en cours…");
+
+  const server = page.net.servers[0];
+  server.push(sse("token", { text: "Salut" }));
+  server.push(sse("done", { conversation_id: "c1", answer: "Salut" }));
+  server.close();
+  await idle(page);
+  assert.deepEqual(page.items().map((item) => item.className), ["message user", "message assistant"]);
+});
+
+test("bulle « réfléchit » retirée à la première carte d'outil, et en fin de réponse vide", async () => {
+  const page = await loadChat(SLOW);
+  page.submit("créneau ?");
+  const server = page.net.servers[0];
+  server.push(sse("tool_start", { name: "rechercher_creneaux_entretien" }));
+  await firstShown(page);
+  assert.equal(page.items()[1].className, "tool-card");
+  // Arrêt : la pause de 10 s en cours est interrompue (sinon le test attendrait sa fin)
+  page.$["chat-stop"].click();
+  await idle(page);
+
+  const empty = await loadChat();
+  empty.submit("rien");
+  empty.net.servers[0].push(sse("done", { conversation_id: "c1", answer: "" }));
+  empty.net.servers[0].close();
+  await idle(empty);
+  assert.deepEqual(empty.items().map((item) => item.className), ["message user"]);
+});
+
+test("chaque résultat d'outil est annoncé ; outil inconnu : libellé générique", async () => {
+  const page = await loadChat({ wordMs: 1, toolCardMs: 1 });
+  page.submit("réserve");
+  const server = page.net.servers[0];
+  server.push(sse("tool_start", { name: "reserver_entretien" }));
+  server.push(sse("tool_result", { name: "reserver_entretien", success: true, summary: "Entretien réservé." }));
+  await waitFor(() => page.$["chat-announcer"].textContent === "Réservation de l'entretien : réussie");
+
+  server.push(sse("tool_start", { name: "outil_futur" }));
+  server.push(sse("tool_result", { name: "outil_futur", success: false, summary: "Impossible." }));
+  await waitFor(() => page.$["chat-announcer"].textContent === "Action de l'assistant : échouée");
+  assert.deepEqual(page.items().at(-1), { className: "tool-card failed", text: "✖ Action de l'assistantImpossible." });
+
+  server.push(sse("done", { conversation_id: "c1", answer: "Fini." }));
+  server.close();
+  await idle(page);
+  assert.equal(page.$["chat-announcer"].textContent, "Fini.");
+});
+
+test("emojis des cartes d'outil masqués aux lecteurs d'écran", async () => {
+  const page = await loadChat();
+  page.submit("réserve");
+  const server = page.net.servers[0];
+  server.push(sse("tool_start", { name: "reserver_entretien" }));
+  server.push(sse("tool_result", { name: "reserver_entretien", success: true, summary: "ok" }));
+  server.push(sse("done", { conversation_id: "c1", answer: "" }));
+  server.close();
+  await idle(page);
+  const [emoji] = page.$["chat-log"].children[1].children;
+  assert.equal(emoji.textContent, "✔");
+  assert.equal(emoji.getAttribute("aria-hidden"), "true");
+});
+
+test("Entrée pendant une composition (IME) n'envoie pas ; Entrée ensuite envoie", async () => {
+  const page = await loadChat();
+  page.$["chat-input"].value = "こんにちは";
+  page.$["chat-input"].dispatch("keydown", { key: "Enter", shiftKey: false, isComposing: true });
+  assert.equal(page.net.requests.length, 0);
+  page.$["chat-input"].dispatch("keydown", { key: "Enter", shiftKey: false, isComposing: false });
+  assert.equal(page.net.requests.length, 1);
+});
+
+test("coupure réseau après done : aucun message d'erreur parasite", async () => {
+  const page = await loadChat();
+  page.submit("salut");
+  const server = page.net.servers[0];
+  server.push(sse("token", { text: "Bonjour." }));
+  server.push(sse("done", { conversation_id: "c1", answer: "Bonjour." }));
+  await waitFor(() => page.items().some((item) => item.className === "message assistant"));
+  server.fail(new TypeError("network error"));
+  await idle(page);
+  assert.deepEqual(page.items().map((item) => item.className), ["message user", "message assistant"]);
+});
+
+test("refus 409 du serveur : le message reçu est affiché tel quel, texte rendu", async () => {
+  const page = await loadChat();
+  page.net.reply = () => Response.json({ detail: "Une réponse est déjà en cours." }, { status: 409 });
+  page.submit("encore");
+  await idle(page);
+  assert.deepEqual(page.items().at(-1), { className: "message assistant error", text: "Une réponse est déjà en cours." });
+  assert.equal(page.$["chat-input"].value, "encore");
+});

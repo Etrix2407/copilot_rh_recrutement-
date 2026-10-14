@@ -1,15 +1,27 @@
 // Appels à l'API, avec des messages d'erreur compréhensibles par tous.
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, retryAfter = null) {
     super(message);
     // Code HTTP, ou 0 si la réponse n'a pas pu être lue (serveur injoignable, flux coupé ou illisible)
     this.status = status;
+    // Délai d'attente conseillé par le serveur (en-tête Retry-After), en secondes, ou null
+    this.retryAfter = retryAfter;
   }
 }
 
-export const NETWORK_ERROR = "Impossible de joindre le serveur. Vérifiez qu'il est bien lancé, puis réessayez.";
+export const NETWORK_ERROR = "Le serveur ne répond pas. Réessayez dans quelques instants.";
 export const UNREADABLE_RESPONSE = "Réponse illisible du serveur.";
+export const GENERIC_ERROR = "Une erreur est survenue. Réessayez dans quelques instants.";
+
+// Attente par défaut avant de réessayer après « trop de demandes » (429) sans délai indiqué
+const DEFAULT_RETRY_SECONDS = 10;
+
+// Nombre de secondes pendant lesquelles « Réessayer » reste désactivé (0 : tout de suite)
+export function retryDelay(error) {
+  if (error?.status !== 429) return 0;
+  return error.retryAfter ?? DEFAULT_RETRY_SECONDS;
+}
 
 async function request(url, options) {
   let response;
@@ -20,8 +32,25 @@ async function request(url, options) {
     if (options?.signal?.aborted) throw error;
     throw new ApiError(NETWORK_ERROR, 0);
   }
-  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+  if (!response.ok) {
+    throw new ApiError(await errorMessage(response), response.status, retryAfterSeconds(response));
+  }
   return response;
+}
+
+// En-tête Retry-After en secondes (la forme « date HTTP » n'est pas utilisée par l'API)
+function retryAfterSeconds(response) {
+  const seconds = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+// Corps JSON d'une réponse réussie : un corps illisible donne un message français, pas une SyntaxError
+async function readJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    throw new ApiError(UNREADABLE_RESPONSE, 0);
+  }
 }
 
 async function errorMessage(response) {
@@ -32,11 +61,11 @@ async function errorMessage(response) {
   } catch {
     // Corps illisible (proxy, serveur arrêté…) : message générique ci-dessous
   }
-  return `Une erreur est survenue (code ${response.status}). Réessayez.`;
+  return GENERIC_ERROR;
 }
 
 export async function getJson(url) {
-  return (await request(url)).json();
+  return readJson(await request(url));
 }
 
 export async function postJson(url, body) {
@@ -45,7 +74,7 @@ export async function postJson(url, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return response.json();
+  return readJson(response);
 }
 
 export async function deleteResource(url) {
@@ -53,7 +82,7 @@ export async function deleteResource(url) {
 }
 
 export async function postForm(url, formData) {
-  return (await request(url, { method: "POST", body: formData })).json();
+  return readJson(await request(url, { method: "POST", body: formData }));
 }
 
 // Lit un flux SSE envoyé en réponse à un POST (EventSource ne gère que GET).

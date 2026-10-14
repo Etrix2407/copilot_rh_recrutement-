@@ -19,7 +19,10 @@ from tests.fakes import FakeEmbeddingFunction, FakeLLMClient, build_pdf
 
 
 @pytest.fixture
-def test_settings(tmp_path: Path) -> Settings:
+def test_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
+    # Variables d'environnement du système ignorées (ex. DEMO_DATE définie dans la console de démo)
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
     # _env_file=None : les tests ne lisent jamais le .env local ni la vraie clé
     return Settings(
         llm_provider="gemini",

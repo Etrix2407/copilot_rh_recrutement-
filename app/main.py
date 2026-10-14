@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import agent, candidates, health, interviews, rag
+from app.api import agent, candidates, docs, health, interviews, rag
 from app.api.errors import install_error_handlers
 from app.api.rate_limit import RateLimiter
 from app.config import Settings, get_settings
@@ -78,7 +78,8 @@ def create_app(
             await llm_client.aclose()
             candidate_store.close()
 
-    app = FastAPI(title="Copilot RH Recrutement", lifespan=lifespan)
+    # Pages /docs et /redoc fournies par app/api/docs.py, avec des versions figées de Swagger UI et ReDoc
+    app = FastAPI(title="Copilot RH Recrutement", lifespan=lifespan, docs_url=None, redoc_url=None)
     install_error_handlers(app)
     app.add_middleware(
         CORSMiddleware,
@@ -87,6 +88,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.add_middleware(SecurityMiddleware, allowed_hosts=settings.allowed_hosts, allowed_origins=settings.cors_origins)
+    app.include_router(docs.router)
     app.include_router(health.router)
     app.include_router(candidates.router)
     app.include_router(rag.router)

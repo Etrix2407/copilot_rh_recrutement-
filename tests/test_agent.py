@@ -275,9 +275,7 @@ def test_stream_emits_tool_events_then_words_then_reply(fake_llm: FakeLLMClient,
     ("slots", "summary"),
     [([], "Aucun créneau libre"), (["10:00"], "1 créneau trouvé")],
 )
-def test_slot_summary_wording(
-    fake_llm: FakeLLMClient, store: CandidateStore, slots: list[str], summary: str
-) -> None:
+def test_slot_summary_wording(fake_llm: FakeLLMClient, store: CandidateStore, slots: list[str], summary: str) -> None:
     RECRUITER_AGENDA["2026-10-16"] = slots
     fake_llm.tool_answers = [tool_call("rechercher_creneaux_entretien", date="2026-10-16"), final("Ok.")]
 
@@ -292,7 +290,8 @@ def test_failed_tool_is_reported_as_failure(fake_llm: FakeLLMClient, store: Cand
     events = collect_events(fake_llm, store)
 
     assert events[2].success is False
-    assert "rechercher_creneaux_entretien" in events[2].summary
+    # Résumé pour l'humain : sans nom de fonction ni tutoiement
+    assert events[2].summary == "Réservation reportée : l'assistant vérifie d'abord les créneaux."
 
 
 def test_iteration_limit_answer_is_streamed(fake_llm: FakeLLMClient, store: CandidateStore) -> None:

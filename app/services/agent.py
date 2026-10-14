@@ -3,14 +3,15 @@
 Protection contre l'injection de prompt : les règles importantes ne reposent pas
 sur le seul prompt système, que le LLM peut ignorer. Les garde-fous (outils connus,
 arguments validés, recherche avant réservation, dossier du candidat vérifié avant de
-prendre un créneau) sont appliqués par app/services/agent_tools.py, et le store
-contrôle les transitions de statut.
+prendre un créneau, une réservation et un changement de statut au plus par demande) sont
+appliqués par app/services/agent_tools.py, et le store contrôle les transitions de statut.
 """
 
 import contextlib
 import datetime
 import logging
 import re
+from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.llm.base import LLMClient, LLMError, Message, Role, ToolResult
 from app.models.agent import TokenEvent, ToolResultEvent, ToolStartEvent
 from app.prompts import load_prompt
-from app.services.agent_tools import is_successful_booking, run_tool, searched_dates_in, summarize
+from app.services.agent_tools import run_tool, searched_dates_in
 from app.services.candidate_store import CandidateStore
 from app.tools.definitions import TOOL_DEFINITIONS
 
@@ -74,7 +75,8 @@ async def stream_agent(
     """
     system = SYSTEM_PROMPT.format(today=(today or datetime.date.today()).isoformat())
     messages = [*history, Message(role=Role.USER, content=user_message)]
-    bookings_done = 0
+    # Appels réussis par outil pendant ce message : plafonds de réservations et de changements de statut
+    successes: Counter[str] = Counter()
 
     for _ in range(MAX_ITERATIONS):
         reply: Message | None = None
@@ -110,14 +112,15 @@ async def stream_agent(
         results: list[ToolResult] = []
         for call in reply.tool_calls:
             yield ToolStartEvent(name=call.name, arguments=call.arguments)
-            result = run_tool(call, store=store, searched_dates=searched_dates, bookings_done=bookings_done)
-            bookings_done += is_successful_booking(result)
-            results.append(result)
+            outcome = run_tool(call, store=store, searched_dates=searched_dates, successes=successes)
+            if outcome.succeeded:
+                successes[call.name] += 1
+            results.append(outcome.result)
             # Point de reprise après CHAQUE outil, AVANT d'afficher son résultat : une réservation
             # déjà faite reste dans l'historique même si la suite de la série échoue ou si le
             # client se déconnecte juste après avoir reçu le résultat
             yield AgentCheckpoint(messages=_with_results(messages, reply, results))
-            yield summarize(result)
+            yield outcome.to_event()
         messages = _with_results(messages, reply, results)
 
     logger.warning("Agent arrêté après %d itérations sans réponse finale", MAX_ITERATIONS)

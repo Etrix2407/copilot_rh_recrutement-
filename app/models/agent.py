@@ -45,13 +45,21 @@ class ToolResultEvent(BaseModel):
 
 
 class DoneEvent(BaseModel):
-    """Fin de la réponse : l'id permet de poursuivre la conversation."""
+    """Fin de la réponse : l'id permet de poursuivre la conversation.
+
+    answer est la dernière réponse de l'assistant, pas tout le texte du tour (voir sa description).
+    """
 
     model_config = ConfigDict(frozen=True)
 
     type: Literal["done"] = "done"
     conversation_id: str
-    answer: str
+    answer: str = Field(
+        description=(
+            "Dernière réponse de l'assistant, écrite après son dernier outil. Le texte écrit avant "
+            "un outil n'y figure pas : le tour complet est la suite des événements token."
+        )
+    )
 
 
 class ErrorEvent(BaseModel):

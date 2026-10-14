@@ -4,7 +4,7 @@ import datetime
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Modèle d'embedding fourni par ChromaDB, sans dépendance supplémentaire
@@ -41,7 +41,30 @@ class Settings(BaseSettings):
     demo_date: datetime.date | None = None
 
 
+class ConfigurationError(Exception):
+    """Le fichier .env est absent, incomplet ou contient une valeur invalide."""
+
+
 @lru_cache
 def get_settings() -> Settings:
-    """Charge la configuration une seule fois et la réutilise ensuite."""
-    return Settings()
+    """Charge la configuration une seule fois et la réutilise ensuite.
+
+    Lève ConfigurationError avec un message lisible (variables en cause, sans leur valeur).
+    """
+    try:
+        return Settings()
+    except ValidationError as exc:
+        raise ConfigurationError(describe_configuration_errors(exc)) from None
+
+
+def describe_configuration_errors(exc: ValidationError) -> str:
+    # Seuls les noms des variables sont cités : une valeur reçue pourrait être une clé API
+    problems = [
+        f"{str(error['loc'][0]).upper()} ({'manquante' if error['type'] == 'missing' else 'invalide'})"
+        for error in exc.errors()
+        if error["loc"]
+    ]
+    return (
+        "Configuration incomplète : " + ", ".join(problems) + ". "
+        "Copiez .env.example en .env, renseignez ces variables, puis relancez."
+    )

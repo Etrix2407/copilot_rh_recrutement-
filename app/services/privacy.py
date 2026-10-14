@@ -9,13 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 def erase_candidate(candidate_id: str, *, store: CandidateStore, conversations: ConversationStore) -> None:
-    """Supprime le candidat, son analyse et les conversations de l'agent qui le mentionnent.
+    """Supprime le candidat, son analyse et TOUTES les conversations de l'agent en mémoire.
 
-    Une réponse de l'agent en cours sur ce candidat ne réenregistrera pas sa conversation
-    (voir ConversationStore.save). Lève CandidateNotFoundError si l'identifiant est inconnu.
+    Chercher le candidat dans les conversations ne suffirait pas : « M. Dupont », « DUPONT Jean »
+    ou une faute de frappe échapperaient à la recherche. Toutes les conversations sont donc
+    oubliées, et une réponse de l'agent en cours n'enregistrera pas la sienne (voir
+    ConversationStore.save). Lève CandidateNotFoundError si l'identifiant est inconnu.
     """
-    candidate = store.get(candidate_id)
     store.delete(candidate_id)
-    # Les conversations contiennent son nom et son email (demandes, arguments des outils)
-    forgotten = conversations.forget_mentions([candidate.name, candidate.email or ""])
+    forgotten = conversations.forget_all()
     logger.info("Candidat effacé, %d conversation(s) oubliée(s)", forgotten)

@@ -4,11 +4,13 @@ Objectif : rejouer les 3 tests officiels du cahier des charges dans l'interface,
 
 ## Avant la démo
 
-1. Redémarrez le serveur (`uvicorn app.main:create_app --factory`, **sans** `--reload` pour éviter un redémarrage en pleine démo) : l'agenda du recruteur revient à son état initial, le créneau de 09:00 est libre.
-2. Vérifiez que le LLM répond : `python -m scripts.check_llm`.
-   Si la démo a lieu après le 14/10/2026, mettez `DEMO_DATE=2026-10-14` dans le `.env` : l'agenda du cahier des charges ne contient que les 15 et 16/10/2026, et l'agent doit les considérer comme à venir.
-3. Ouvrez <http://localhost:8000/> et, dans l'onglet **Candidats**, supprimez les candidats des essais précédents.
-4. Évitez de lancer `pytest -m llm` juste avant : la clé gratuite de Gemini limite le nombre de requêtes par minute.
+1. Si la démo a lieu après le 14/10/2026, mettez `DEMO_DATE=2026-10-14` dans le `.env` **avant** de lancer le serveur : l'agenda du cahier des charges ne contient que les 15 et 16/10/2026, et l'agent doit les considérer comme à venir. Le `.env` n'est lu qu'au démarrage : après toute modification, redémarrez le serveur.
+2. Lancez (ou relancez) le serveur, **sans** `--reload` pour éviter un redémarrage en pleine démo :
+   `uvicorn app.main:create_app --factory --no-proxy-headers`.
+   L'agenda du recruteur revient à son état initial : le créneau de 09:00 est libre.
+3. Vérifiez que le LLM répond : `python -m scripts.check_llm`.
+4. Ouvrez <http://localhost:8000/> et, dans l'onglet **Candidats**, supprimez les candidats des essais précédents.
+5. Évitez de lancer `pytest -m llm` juste avant : la clé gratuite de Gemini limite le nombre de requêtes par minute (et par jour).
 
 ## Déroulé
 
@@ -29,7 +31,8 @@ Montrez les 4 onglets.
 ### 1:45 – 2:15 · Tableau des candidats
 
 1. Onglet **Candidats** : Jean Dupont et Sophie Martin apparaissent, statut **CV analysé**.
-2. Triez par score.
+2. La ligne de synthèse résume le nombre de candidats par statut et le score moyen. Triez par score.
+3. Cliquez sur le nom de Jean Dupont : son analyse complète s'ouvre sous le tableau.
 
 > « Les candidats sont enregistrés en base : ils restent après un redémarrage, et le bouton Supprimer applique le droit à l'effacement. »
 
@@ -59,6 +62,9 @@ Montrez les 4 onglets.
 
 | Symptôme | Cause probable | Que faire |
 | --- | --- | --- |
+| Le serveur s'arrête au démarrage avec « Configuration incomplète : … » | Variable absente ou invalide dans le `.env` | Compléter les variables citées (modèle : `.env.example`), puis relancer |
+| Le premier démarrage est long | Téléchargement du modèle d'embedding (environ 80 Mo) | Attendre ; les démarrages suivants sont rapides |
+| L'agent dit qu'aucun créneau n'est disponible ou que la date est passée | `DEMO_DATE` absente, ou ajoutée sans redémarrer | Mettre `DEMO_DATE=2026-10-14` dans le `.env`, puis redémarrer le serveur |
 | « Le service d'IA est momentanément indisponible » | Quota Gemini par minute atteint | Attendre une minute, puis réessayer |
 | « Trop de demandes en peu de temps » | Limite de 10 appels par minute de l'application | Attendre le délai indiqué |
 | « Entretien non réservé : le dossier … est au statut « entretien planifié » » | Jean Dupont déjà planifié lors d'une répétition | Supprimer le candidat dans **Candidats**, puis refaire l'analyse |

@@ -1,7 +1,5 @@
 """Pilier 1 : analyse structurée d'un CV par le LLM, validée par Pydantic."""
 
-import unicodedata
-
 from app.data.job_offers import PYTHON_DEV_JOB_OFFER
 from app.llm.base import LLMClient
 from app.models.candidate import Candidate
@@ -10,7 +8,7 @@ from app.prompts import load_prompt
 from app.services.candidate_store import CandidateStore
 from app.services.prompt_safety import as_data
 from app.services.structured_output import generate_validated
-from app.tools.candidates import normalize_name
+from app.services.text import clean_name, normalize_name
 
 # Température nulle : la même entrée doit donner la même analyse
 TEMPERATURE = 0.0
@@ -44,7 +42,7 @@ async def analyze_candidate(cv_text: str, *, llm: LLMClient, store: CandidateSto
     """
     analysis = await parse_cv(llm, cv_text)
     # Forme Unicode unique (NFC) : un nom extrait d'un PDF en NFD s'affiche et se compare comme les autres
-    name = unicodedata.normalize("NFC", " ".join((analysis.candidate_name or "").split()))[:MAX_NAME_LENGTH]
+    name = clean_name(analysis.candidate_name or "")[:MAX_NAME_LENGTH]
     name = name or UNNAMED_CANDIDATE
     # Même email ET même nom : c'est le même candidat (le dossier le plus récent s'il y en a plusieurs).
     # Un email partagé par deux personnes ne fusionne rien.

@@ -15,7 +15,7 @@ SEARCHED = {"2026-10-15"}
 
 def run(store: CandidateStore, name: str, **arguments: object) -> object:
     call = ToolCall(id="1", name=name, arguments=arguments)
-    return run_tool(call, store=store, searched_dates=SEARCHED).content
+    return run_tool(call, store=store, searched_dates=SEARCHED).result.content
 
 
 def book(store: CandidateStore, **changes: object) -> dict[str, str]:

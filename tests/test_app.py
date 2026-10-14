@@ -1,7 +1,9 @@
 from collections.abc import Iterator
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.api.docs import REDOC_VERSION, SWAGGER_UI_VERSION
 from app.config import Settings
 from app.data.hr_policies import HR_POLICIES
 from app.llm.gemini import GeminiClient
@@ -130,3 +132,34 @@ def test_refusals_also_carry_security_headers(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_docs_use_pinned_swagger_and_redoc_versions(client: TestClient) -> None:
+    docs = client.get("/docs")
+    redoc = client.get("/redoc")
+
+    assert docs.status_code == 200 and redoc.status_code == 200
+    assert f"swagger-ui-dist@{SWAGGER_UI_VERSION}/swagger-ui-bundle.js" in docs.text
+    assert f"redoc@{REDOC_VERSION}/" in redoc.text
+    # La spécification OpenAPI reste servie, et les pages de doc n'y figurent pas
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/agent/chat" in paths and "/docs" not in paths
+
+
+@pytest.mark.parametrize("path", ["/docs%2f..%2findex.html", "/docs/..%2f", "/redoc%2f..%2findex.html", "/docsx"])
+def test_csp_cannot_be_dropped_by_a_path_starting_with_docs(client: TestClient, path: str) -> None:
+    response = client.get(path)
+
+    # Quelle que soit la page obtenue, elle garde la CSP (seuls /docs et /redoc exacts en sont privés)
+    assert "content-security-policy" in response.headers
+
+
+def test_no_page_can_be_framed_not_even_the_docs(client: TestClient) -> None:
+    for path in ("/", "/docs", "/redoc", "/api/candidates"):
+        assert client.get(path).headers["x-frame-options"] == "DENY"
+
+
+def test_api_responses_are_never_cached(client: TestClient) -> None:
+    assert client.get("/api/candidates").headers["cache-control"] == "no-store"
+    # L'interface elle-même peut être mise en cache : elle ne contient aucune donnée personnelle
+    assert client.get("/").headers.get("cache-control") != "no-store"

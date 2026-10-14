@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Copilot RH</title>
+  <title>Analyser un CV — Copilot RH</title>
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="js/main.js"></script>
 </head>
@@ -15,10 +15,10 @@
     <p class="site-subtitle">L'assistant de recrutement</p>
     <nav aria-label="Rubriques">
       <ul class="tabs">
-        <li><a id="tab-cv" href="#cv">📄 Analyser un CV</a></li>
-        <li><a id="tab-candidats" href="#candidats">👥 Candidats</a></li>
-        <li><a id="tab-rh" href="#rh">❓ Questions RH</a></li>
-        <li><a id="tab-entretien" href="#entretien">📅 Planifier un entretien</a></li>
+        <li><a id="tab-cv" href="#cv"><span aria-hidden="true">📄</span> Analyser un CV</a></li>
+        <li><a id="tab-candidats" href="#candidats"><span aria-hidden="true">👥</span> Candidats</a></li>
+        <li><a id="tab-rh" href="#rh"><span aria-hidden="true">❓</span> Questions RH</a></li>
+        <li><a id="tab-entretien" href="#entretien"><span aria-hidden="true">📅</span> Planifier un entretien</a></li>
       </ul>
     </nav>
   </header>
@@ -32,18 +32,20 @@
       <form id="cv-form" class="card" novalidate>
         <div class="field">
           <label for="cv-file">Fichier du CV <span class="optional">(PDF ou .txt)</span></label>
-          <input id="cv-file" name="file" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+          <input id="cv-file" name="file" type="file" accept=".pdf,.txt,application/pdf,text/plain" aria-describedby="cv-file-hint">
+          <p id="cv-file-hint" class="hint small">PDF ou .txt, 2 Mo et 10 pages au maximum. Un PDF scanné (image) ne peut pas être lu : collez alors le texte.</p>
+          <button type="button" id="cv-file-clear" class="button" hidden>Retirer le fichier</button>
         </div>
         <p class="separator" aria-hidden="true">ou</p>
         <div class="field">
           <label for="cv-text">Texte du CV</label>
           <textarea id="cv-text" name="text" rows="8" placeholder="Collez ici le contenu du CV…"></textarea>
         </div>
-        <div class="samples">
+        <div id="cv-samples-block" class="samples">
           <span id="samples-label">Essayer avec un exemple :</span>
           <div id="cv-samples" class="chips" role="group" aria-labelledby="samples-label"></div>
         </div>
-        <button type="submit" class="button primary">Analyser ce CV</button>
+        <button type="submit" id="cv-submit" class="button primary">Analyser ce CV</button>
       </form>
 
       <div id="cv-status" class="status" role="status" aria-live="polite"></div>
@@ -63,11 +65,14 @@
           <option value="status">Statut</option>
           <option value="name">Nom</option>
         </select>
-        <button type="button" id="candidates-refresh" class="button">↻ Actualiser</button>
+        <button type="button" id="candidates-refresh" class="button"><span aria-hidden="true">↻</span> Actualiser</button>
       </div>
 
-      <div id="candidates-status" class="status" role="status" aria-live="polite"></div>
+      <div id="candidates-status" class="status" role="status" aria-live="polite" tabindex="-1"></div>
+      <ul id="candidates-summary" class="stats" aria-label="Synthèse" hidden></ul>
       <div id="candidates-table" class="table-wrapper"></div>
+      <!-- Analyse complète du candidat choisi dans le tableau (bouton sur son nom) -->
+      <section id="candidate-details" class="card result" aria-label="Analyse du candidat" hidden></section>
     </section>
 
     <!-- 3. Assistant RH -->
@@ -87,7 +92,7 @@
             <button type="button" class="chip" data-question="Quelle est la prime de naissance accordée par l'entreprise ?">Prime de naissance</button>
           </div>
         </div>
-        <button type="submit" class="button primary">Poser la question</button>
+        <button type="submit" id="hr-submit" class="button primary">Poser la question</button>
       </form>
 
       <div id="hr-status" class="status" role="status" aria-live="polite"></div>
@@ -102,19 +107,20 @@
       <div class="chat card">
         <ol id="chat-log" class="chat-log" aria-label="Conversation"></ol>
         <p id="chat-empty" class="empty">La conversation est vide. Écrivez votre première demande ci-dessous.</p>
-        <!-- Seule la réponse terminée est lue par les lecteurs d'écran, pas chaque mot -->
+        <!-- Lu par les lecteurs d'écran : début de la recherche, résultat de chaque outil, puis la réponse
+             terminée (pas chaque mot) -->
         <div id="chat-announcer" class="visually-hidden" role="status" aria-live="polite"></div>
 
         <form id="chat-form" class="chat-form" novalidate>
           <label for="chat-input">Votre demande</label>
-          <textarea id="chat-input" rows="3" maxlength="2000" placeholder="Par exemple : trouve-moi un créneau le 2026-10-15 pour Jean Dupont (jean.dupont@email.com)"></textarea>
-          <p class="hint small">Entrée pour envoyer, Maj + Entrée pour aller à la ligne.</p>
+          <textarea id="chat-input" rows="3" maxlength="2000" aria-describedby="chat-input-hint" placeholder="Par exemple : trouve-moi un créneau le 2026-10-15 pour Jean Dupont (jean.dupont@email.com)"></textarea>
+          <p id="chat-input-hint" class="hint small">Entrée pour envoyer, Maj + Entrée pour aller à la ligne.</p>
           <div class="chips">
             <button type="button" class="chip" data-message="Trouve-moi un créneau le 2026-10-15 pour réserver un entretien avec Jean Dupont (jean.dupont@email.com)">Exemple : entretien de Jean Dupont</button>
           </div>
           <div class="chat-actions">
             <button type="submit" id="chat-send" class="button primary">Envoyer</button>
-            <button type="button" id="chat-stop" class="button" hidden>■ Arrêter</button>
+            <button type="button" id="chat-stop" class="button" hidden><span aria-hidden="true">■</span> Arrêter</button>
             <button type="button" id="chat-reset" class="button">Nouvelle conversation</button>
           </div>
         </form>

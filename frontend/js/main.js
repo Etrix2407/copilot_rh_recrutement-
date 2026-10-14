@@ -15,11 +15,13 @@ function showPanel(id, { focus }) {
     if (panel === current) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
+  // Le titre de l'onglet du navigateur (et de l'historique) suit la rubrique affichée
+  const heading = document.querySelector(`#${current} h2`);
+  document.title = `${heading.textContent} — Copilot RH`;
   // Le tableau est rechargé à chaque visite : un statut changé par l'agent y apparaît aussitôt
   if (current === "candidats") refreshCandidates();
   // Au clavier ou au lecteur d'écran, on arrive directement sur le titre de la rubrique
   if (focus) {
-    const heading = document.querySelector(`#${current} h2`);
     heading.setAttribute("tabindex", "-1");
     heading.focus();
   }

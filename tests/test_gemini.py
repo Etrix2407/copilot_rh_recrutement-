@@ -263,3 +263,71 @@ def test_network_error_during_stream_becomes_llm_error() -> None:
 
     with pytest.raises(LLMError, match="injoignable"):
         stream_with_tools(httpx.MockTransport(handler), [Message(role=Role.USER, content="Bonjour")])
+
+
+# --- Délai maximal des appels ---
+
+
+class SlowServer(httpx.AsyncBaseTransport):
+    """Serveur qui ne répond jamais à temps.
+
+    Applique le délai de lecture de la requête comme le ferait le vrai transport httpx
+    (httpx.MockTransport l'ignore) et note les délais reçus.
+    """
+
+    def __init__(self) -> None:
+        self.read_timeouts: list[float | None] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        read_timeout = request.extensions["timeout"]["read"]
+        self.read_timeouts.append(read_timeout)
+        try:
+            await asyncio.wait_for(asyncio.sleep(5), timeout=read_timeout)
+        except TimeoutError:
+            raise httpx.ReadTimeout("délai dépassé", request=request) from None
+        return httpx.Response(200, json=GEMINI_OK_RESPONSE)
+
+
+LLM_CALLS: dict[str, Callable[[GeminiClient], Awaitable[object]]] = {
+    "generate": lambda client: client.generate("Bonjour"),
+    "generate_json": lambda client: client.generate_json(
+        [Message(role=Role.USER, content="Bonjour")], system="Analyse", schema=Answer, temperature=0.0
+    ),
+    "stream_with_tools": lambda client: _collect_stream(client),
+}
+
+
+async def _collect_stream(client: GeminiClient) -> list[str | Message]:
+    stream = client.stream_with_tools(
+        [Message(role=Role.USER, content="Bonjour")], system="Agent", tools=[SEARCH_TOOL], temperature=0.0
+    )
+    return [item async for item in stream]
+
+
+@pytest.mark.parametrize("call", LLM_CALLS.values(), ids=LLM_CALLS.keys())
+def test_calls_have_a_timeout_in_seconds(call: Callable[[GeminiClient], Awaitable[object]]) -> None:
+    timeouts: list[dict[str, float | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts.append(request.extensions["timeout"])
+        if "stream" in request.url.path.casefold():
+            return httpx.Response(200, text=f"data: {json.dumps(text_chunk('ok'))}\r\n\r\n")
+        return httpx.Response(200, json=text_chunk("ok"))
+
+    run_with_client(httpx.MockTransport(handler), call)
+
+    # Le SDK reçoit des millisecondes et transmet des secondes à httpx
+    assert timeouts[0]["read"] == gemini.LLM_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("call", LLM_CALLS.values(), ids=LLM_CALLS.keys())
+def test_silent_server_becomes_llm_error(
+    monkeypatch: pytest.MonkeyPatch, call: Callable[[GeminiClient], Awaitable[object]]
+) -> None:
+    monkeypatch.setattr(gemini, "LLM_TIMEOUT_SECONDS", 0.05)
+    server = SlowServer()
+
+    with pytest.raises(LLMError, match="injoignable"):
+        run_with_client(server, call)
+    # Chaque essai (relances du SDK comprises) est borné par le délai
+    assert server.read_timeouts == [0.05] * gemini.TRANSIENT_ERROR_RETRY.attempts
